@@ -51,8 +51,23 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Ad-hoc signing (ties mic permission to the bundle)"
-codesign --force --deep --sign - "$BUNDLE"
+# macOS keys Microphone and Accessibility grants to the app's signing identity.
+# An ad-hoc signature is keyed to a hash of the binary, so every rebuild looked
+# like a brand new app and every permission reset. A real certificate keeps the
+# designated requirement stable, and the grants survive.
+#
+# Override with SIGN_ID=... to use another one. "Developer ID Application" is
+# the one to pick if this DMG is ever given to someone else; it also needs
+# notarizing for that.
+SIGN_ID="${SIGN_ID:-Apple Development: Opeyemi Ajagbe (34598C886Y)}"
+if ! security find-identity -v -p codesigning | grep -qF "$SIGN_ID"; then
+    echo "!!  signing identity not found: $SIGN_ID"
+    echo "!!  falling back to ad-hoc; permissions will reset on every build"
+    SIGN_ID="-"
+fi
+
+echo "==> Signing as: $SIGN_ID"
+codesign --force --deep --sign "$SIGN_ID" "$BUNDLE"
 codesign --verify --verbose=1 "$BUNDLE"
 
 echo "==> Building DMG"
