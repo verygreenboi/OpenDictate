@@ -14,10 +14,7 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
     let modal = egui::Modal::new(egui::Id::new("settings"))
         .backdrop_color(Color32::from_black_alpha(150))
         .frame(
-            egui::Frame::new()
-                .fill(Color32::from_rgb(0x34, 0x34, 0x34))
-                .corner_radius(12)
-                .stroke(Stroke::new(1.0, Color32::from_rgb(0x44, 0x44, 0x44))),
+            theme::ink_panel(),
         );
     let resp = modal.show(ctx, |ui| {
         ui.set_min_size(size);
@@ -386,7 +383,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             let mut remove = None;
             for (i, k) in app.s.keys(a).iter().enumerate() {
                 egui::Frame::new()
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(0x55, 0x55, 0x55)))
+                    .stroke(Stroke::new(2.0, theme::INK))
                     .corner_radius(8)
                     .inner_margin(Margin::symmetric(6, 5))
                     .show(ui, |ui| {
@@ -566,7 +563,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         for tone in Tone::ALL {
             let active = app.s.tone == tone;
             let resp = egui::Frame::new()
-                .fill(if active { Color32::from_rgb(0x2E, 0x3A, 0x5E) } else { Color32::from_rgb(0x2C, 0x2C, 0x2C) })
+                .fill(if active { theme::INK } else { theme::SURFACE })
                 .stroke(Stroke::new(1.0, if active { theme::ACCENT } else { Color32::from_rgb(0x44, 0x44, 0x44) }))
                 .corner_radius(10)
                 .inner_margin(Margin::same(10))
@@ -664,7 +661,8 @@ pub fn capture_shortcut(app: &mut DictateApp, ctx: &egui::Context) {
     });
     egui::Area::new(egui::Id::new("capture")).order(egui::Order::Tooltip).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
         egui::Frame::new()
-            .fill(Color32::from_rgb(0x1C, 0x1C, 0x1C))
+            .fill(theme::SURFACE)
+            .stroke(Stroke::new(2.5, theme::INK))
             .stroke(Stroke::new(1.0, theme::ACCENT))
             .corner_radius(12)
             .inner_margin(Margin::same(20))

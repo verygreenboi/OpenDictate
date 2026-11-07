@@ -229,11 +229,11 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     let mut share = false;
     ui.horizontal(|ui| {
         ui.add_space(0.0);
-        ui.label(m("Insights", 24.0, Color32::from_rgb(0xB8, 0xB8, 0xB8)));
+        ui.label(d("Insights", 24.0, theme::MUTED));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let btn = egui::Button::new(m(format!("{} Share", crate::icon::SHARE), 14.0, theme::TEXT))
-                .fill(Color32::from_rgb(0x1C, 0x1C, 0x1C))
-                .stroke(Stroke::new(1.0, theme::LINE))
+                .fill(theme::SURFACE)
+                .stroke(Stroke::new(2.5, theme::INK))
                 .corner_radius(16);
             share = ui.add(btn).clicked();
         });
@@ -275,12 +275,12 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     personalization_card(app, ui, w);
 
     let rect = Rect::from_min_max(pos2(left - 12.0, top - 12.0), pos2(left + w + 12.0, ui.cursor().top() + 4.0));
-    let mut shapes = vec![egui::Shape::rect_filled(rect, 14.0, Color32::from_rgb(0x25, 0x25, 0x25))];
+    let mut shapes = vec![egui::Shape::rect_filled(rect, 14.0, theme::PAPER)];
     let mut y = rect.top() + 4.0;
     while y < rect.bottom() - 2.0 {
         let mut x = rect.left() + 4.0;
         while x < rect.right() - 2.0 {
-            shapes.push(egui::Shape::rect_filled(Rect::from_min_size(pos2(x, y), vec2(1.0, 1.0)), 0.0, Color32::from_rgb(0x2E, 0x2E, 0x2E)));
+            shapes.push(egui::Shape::rect_filled(Rect::from_min_size(pos2(x, y), vec2(1.0, 1.0)), 0.0, Color32::from_rgba_unmultiplied(0xF4, 0xF3, 0xEF, 20)));
             x += 6.0;
         }
         y += 6.0;
@@ -476,7 +476,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
         ("Speech model", speech_ok, speech, speech_where, Color32::from_rgb(0x3A, 0x47, 0x5C)),
         ("Text model", text_ok, text, if text_ok { text_where } else { "Optional · pastes as heard" }, Color32::from_rgb(0x4A, 0x45, 0x5E)),
     ] {
-        let resp = egui::Frame::new().fill(tint).corner_radius(14).inner_margin(Margin::same(12)).show(ui, |ui| {
+        let resp = theme::ink(tint, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(186.0 - 24.0);
             ui.label(b(title, 16.0, theme::TEXT));
             ui.add_space(2.0);
@@ -506,9 +506,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 pub fn kbd(ui: &mut egui::Ui, k: &str) {
-    egui::Frame::new()
-        .fill(Color32::from_rgb(0x1E, 0x1E, 0x1E))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(0x50, 0x50, 0x50)))
+    theme::ink(theme::SURFACE, 14, 2.5, 3)
         .corner_radius(5)
         .inner_margin(Margin::symmetric(6, 2))
         .show(ui, |ui| ui.label(b(pretty_key(k), 13.0, theme::TEXT)));
@@ -650,7 +648,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         let day = stats::local_date(items[i].when);
         ui.label(t(stats::day_heading(day), 13.0, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
         ui.add_space(2.0);
-        egui::Frame::new().stroke(Stroke::new(1.0, Color32::from_rgb(0x30, 0x30, 0x30))).corner_radius(8).show(ui, |ui| {
+        theme::ink(theme::SURFACE, 12, 2.0, 2).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let mut first = true;
             while i < items.len() && stats::local_date(items[i].when) == day {
@@ -891,8 +889,8 @@ fn toast(app: &mut DictateApp, ctx: &egui::Context) {
     let Some(toast) = &app.toast else { return };
     egui::Area::new(egui::Id::new("toast")).order(egui::Order::Tooltip).anchor(Align2::CENTER_BOTTOM, vec2(108.0, -28.0)).show(ctx, |ui| {
         egui::Frame::new()
-            .fill(if toast.error { Color32::from_rgb(0x4A, 0x22, 0x28) } else { Color32::from_rgb(0x1C, 0x1C, 0x1C) })
-            .stroke(Stroke::new(1.0, if toast.error { theme::RED } else { theme::LINE }))
+            .fill(if toast.error { theme::RED } else { theme::SURFACE })
+            .stroke(Stroke::new(2.5, theme::INK))
             .corner_radius(10)
             .inner_margin(Margin::symmetric(16, 10))
             .show(ui, |ui| {

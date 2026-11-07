@@ -707,10 +707,12 @@ impl DictateApp {
             .with_window_level(egui::WindowLevel::AlwaysOnTop)
             .with_mouse_passthrough(true);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("indicator"), builder, |ui, _| {
-            let rect = ui.max_rect();
+            // Inset so the hard offset shadow has room inside the viewport.
+            let rect = ui.max_rect().shrink(5.0);
             let p = ui.painter();
-            p.rect_filled(rect.shrink(1.0), 23.0, egui::Color32::from_rgb(0x16, 0x16, 0x16));
-            p.rect_stroke(rect.shrink(1.0), 23.0, egui::Stroke::new(1.0, theme::LINE), egui::StrokeKind::Inside);
+            p.rect_filled(rect.translate(egui::vec2(4.0, 5.0)), 23.0, theme::INK);
+            p.rect_filled(rect, 23.0, theme::SURFACE);
+            p.rect_stroke(rect, 23.0, egui::Stroke::new(3.0, theme::INK), egui::StrokeKind::Inside);
             let t = ui.input(|i| i.time) as f32;
             let left = rect.left() + 22.0;
             for i in 0..9 {
