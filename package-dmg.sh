@@ -65,6 +65,10 @@ hdiutil create \
     -ov -format UDZO \
     "$DMG" >/dev/null
 
+# Leaving the staging bundle behind gives Spotlight a second "Open Dictate"
+# to offer, which is how you end up launching a stale build by accident.
+rm -rf "$STAGE"
+
 echo
 echo "DMG:  $(cd "$DIST" && pwd)/$(basename "$DMG")"
 echo "Size: $(du -h "$DMG" | cut -f1)"
