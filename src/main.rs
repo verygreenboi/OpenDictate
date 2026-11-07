@@ -123,6 +123,13 @@ fn main() -> eframe::Result<()> {
                 .with_transparent(true)
                 .with_resizable(false)
                 .with_active(false)
+                // Floating above everything is what makes this work. A window
+                // macOS considers covered stops being drawn, and a root that is
+                // not drawn produces no frames at all - which is how the
+                // indicator went missing whenever the real window was buried.
+                .with_window_level(eframe::egui::WindowLevel::AlwaysOnTop)
+                .with_mouse_passthrough(true)
+                .with_taskbar(false)
         },
         ..Default::default()
     };
