@@ -112,6 +112,7 @@ pub struct DictateApp {
     /// screenshot mode, and on any system that refuses the icon.
     tray: Option<Tray>,
     tray_rx: Option<Receiver<MenuEvent>>,
+    tray_status: Option<&'static str>,
     /// True while the window is hidden after a close. Frames stop arriving for
     /// an invisible window, so the pump below keeps the event loop turning.
     hidden: bool,
@@ -178,6 +179,7 @@ impl DictateApp {
             shot_done: Default::default(),
             tray: None,
             tray_rx: None,
+            tray_status: None,
             hidden: false,
             quitting: false,
         };
@@ -240,6 +242,21 @@ impl DictateApp {
         }
         if self.hidden {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+
+        // The menu bar is the only place a closed window can report from.
+        let status = if self.recording.is_some() {
+            Some("Listening")
+        } else if self.busy.is_some() {
+            Some("Thinking…")
+        } else {
+            None
+        };
+        if status != self.tray_status {
+            self.tray_status = status;
+            if let Some(t) = &self.tray {
+                t.set_status(status);
+            }
         }
     }
 

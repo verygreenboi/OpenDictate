@@ -10,10 +10,22 @@ use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 pub struct Tray {
-    /// Held only so the icon stays in the menu bar; dropping it removes the icon.
-    _icon: TrayIcon,
+    /// Held so the icon stays in the menu bar; dropping it removes the icon.
+    icon: TrayIcon,
     pub show: MenuId,
     pub quit: MenuId,
+}
+
+impl Tray {
+    /// Says what the app is doing, beside the menu bar icon.
+    ///
+    /// While the window is closed this is the only feedback there can be: egui
+    /// renders nothing at all with its root viewport hidden, so the on-screen
+    /// pill cannot appear. The menu bar is drawn by the system instead.
+    pub fn set_status(&self, text: Option<&str>) {
+        self.icon.set_title(text);
+        let _ = self.icon.set_tooltip(Some(text.unwrap_or("Open Dictate")));
+    }
 }
 
 /// Three bars, like the mark in the sidebar. Drawn here so the app needs no
@@ -69,6 +81,6 @@ pub fn build(ctx: &egui::Context) -> Option<(Tray, Receiver<MenuEvent>)> {
         }
     }
 
-    let tray = Tray { _icon: builder.build().ok()?, show: ids.0, quit: ids.1 };
+    let tray = Tray { icon: builder.build().ok()?, show: ids.0, quit: ids.1 };
     Some((tray, rx))
 }
