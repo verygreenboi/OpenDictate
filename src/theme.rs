@@ -40,6 +40,15 @@ pub fn m(s: impl Into<String>, size: f32, color: Color32) -> RichText {
     RichText::new(s).font(FontId::new(size, medium())).color(color)
 }
 
+/// Body copy that runs to more than one line.
+///
+/// egui spaces rows by the font's own metrics, which is about 1.2x the size:
+/// fine for a label, too tight to read a paragraph in. Anything that wraps
+/// should use this instead of `t`.
+pub fn para(s: impl Into<String>, size: f32, color: Color32) -> RichText {
+    t(s, size, color).line_height(Some(size * 1.5))
+}
+
 /// Uses the system's San Francisco font at three weights when it's there,
 /// falling back to egui's built-in font elsewhere.
 pub fn install(ctx: &egui::Context) {

@@ -4,7 +4,7 @@
 use crate::app::{DictateApp, SettingsTab};
 use crate::engines;
 use crate::settings::{Action, SpeechEngine, TextEngine, Tone};
-use crate::theme::{self, b, m, t};
+use crate::theme::{self, b, m, para, t};
 use crate::views::{VERSION, icon_button, kbd, nav_item};
 use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Margin, Sense, Stroke, vec2};
 
@@ -93,7 +93,7 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
             ui.set_width(left);
             ui.label(m(title, 14.0, theme::TEXT));
             if !desc.is_empty() {
-                ui.label(t(desc, 13.5, Color32::from_rgb(0xB8, 0xB8, 0xB8)));
+                ui.label(para(desc, 13.5, Color32::from_rgb(0xB8, 0xB8, 0xB8)));
             }
         });
         ui.add_space(16.0);
@@ -107,7 +107,7 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
 
 fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(b("Models", 24.0, theme::TEXT));
-    ui.label(t("You choose what turns your voice into text and what tidies it up. Nothing runs anywhere you didn't pick.", 13.5, theme::MUTED));
+    ui.label(para("You choose what turns your voice into text and what tidies it up. Nothing runs anywhere you didn't pick.", 13.5, theme::MUTED));
     ui.add_space(10.0);
     egui::Frame::new()
         .fill(Color32::from_rgb(0x2E, 0x3A, 0x5E))
@@ -117,7 +117,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(m("What you need", 14.0, theme::TEXT));
-            ui.label(t(
+            ui.label(para(
                 "• Speech model (required): turns your voice into text. A downloaded Whisper model is all Dictate needs.\n\
                  • Text model (optional): removes filler words, fixes corrections and formats. Translate and Ask anything need it. \
                  Without one, Dictate pastes exactly what you said.",
@@ -336,7 +336,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     }
 
     section(ui, crate::icon::FLASK, "Try it");
-    ui.label(t("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
+    ui.label(para("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
     ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(f32::INFINITY).desired_rows(2));
     let running = app.test_running.load(std::sync::atomic::Ordering::SeqCst);
     let btn = egui::Button::new(b(if running { "Running…" } else { "Run test" }, 14.0, Color32::WHITE)).fill(theme::ACCENT);
@@ -456,7 +456,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     if c {
         app.changed();
     }
-    ui.label(t(
+    ui.label(para(
         "Pasting needs Accessibility access and recording needs Microphone access (System Settings › Privacy & Security).",
         12.5,
         theme::FAINT,
@@ -514,7 +514,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             if let Some(e) = r.error() {
                 ui.label(t(format!("{} The microphone stopped: {e}", crate::icon::WARN), 12.5, theme::RED));
             } else if r.sample_count() == 0 && r.elapsed() > 1.5 {
-                ui.label(t(format!("{} No sound is arriving from this microphone. Try another one or reconnect it.", crate::icon::WARN), 12.5, theme::RED));
+                ui.label(para(format!("{} No sound is arriving from this microphone. Try another one or reconnect it.", crate::icon::WARN), 12.5, theme::RED));
             } else if r.elapsed() > 1.5 && r.peak() == 0.0 {
                 // Exact digital silence on a live device is what macOS sends when access is blocked.
                 ui.label(t(format!("{} macOS is blocking the microphone (it only sends silence).", crate::icon::WARN), 12.5, theme::RED));
@@ -614,7 +614,7 @@ fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(b("About", 24.0, theme::TEXT));
     ui.add_space(8.0);
     ui.label(t(format!("Open Dictate v{VERSION}"), 14.0, theme::TEXT));
-    ui.label(t(
+    ui.label(para(
         "Voice dictation that runs on the models you choose. Speak in any app; your words are transcribed, tidied up and pasted where your cursor is.",
         13.5,
         theme::MUTED,
@@ -670,7 +670,7 @@ pub fn capture_shortcut(app: &mut DictateApp, ctx: &egui::Context) {
             .inner_margin(Margin::same(20))
             .show(ui, |ui| {
                 ui.label(b(format!("Press the shortcut for {}", action.label()), 16.0, theme::TEXT));
-                ui.label(t("Function keys (F13–F19) or a combination like ⌥ Space work best. Esc cancels.", 13.0, theme::MUTED));
+                ui.label(para("Function keys (F13–F19) or a combination like ⌥ Space work best. Esc cancels.", 13.0, theme::MUTED));
             });
     });
     if let Some(r) = done {

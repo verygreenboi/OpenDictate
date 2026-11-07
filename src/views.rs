@@ -4,7 +4,7 @@
 use crate::app::{DictateApp, Page, SettingsTab};
 use crate::settings::{Action, DictWord, KeepHistory, SpeechEngine, TextEngine};
 use crate::stats;
-use crate::theme::{self, b, m, t};
+use crate::theme::{self, b, m, para, t};
 use chrono::{Datelike, Duration, Local};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Margin, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 
@@ -618,7 +618,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.painter().rect_filled(r, 0.0, theme::LINE);
         ui.add_space(6.0);
         ui.label(m(format!("{} Your data stays yours", crate::icon::LOCK), 14.0, theme::TEXT));
-        ui.label(t(
+        ui.label(para(
             "Recordings and text are kept only on this Mac. Your voice goes only to the speech and text models you chose in Models.",
             14.0,
             Color32::from_rgb(0xC8, 0xC8, 0xC8),
@@ -714,7 +714,7 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                             ui.label(t("Ask anything", 11.5, theme::HEAT[3]));
                         }
                     }
-                    ui.label(t(&e.text, 14.0, theme::TEXT));
+                    ui.label(para(&e.text, 14.0, theme::TEXT));
                     if app.expanded == Some(e.when) {
                         ui.add_space(4.0);
                         if !e.selection.is_empty() {
@@ -850,7 +850,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.add_space(30.0);
         ui.vertical_centered(|ui| {
             ui.label(m("No words yet", 18.0, theme::TEXT));
-            ui.label(t("Add names and terms here, or correct a dictation in History and new words are learned automatically.", 14.0, theme::MUTED));
+            ui.label(para("Add names and terms here, or correct a dictation in History and new words are learned automatically.", 14.0, theme::MUTED));
         });
         return;
     }
