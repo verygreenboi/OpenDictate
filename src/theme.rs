@@ -46,6 +46,13 @@ pub fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let fallback = fonts.families[&FontFamily::Proportional].clone();
     let sf = std::fs::read("/System/Library/Fonts/SFNS.ttf").ok();
+    // Lucide sits behind every family, so an icon codepoint inside an ordinary
+    // string just renders. Its glyphs live in a private use area, which no text
+    // font claims, so nothing else is affected.
+    fonts.font_data.insert(
+        "lucide".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/lucide.ttf"))),
+    );
     let mut add = |name: &str, family: FontFamily, weight: f32| {
         let mut list = Vec::new();
         if let Some(bytes) = &sf {
@@ -57,6 +64,7 @@ pub fn install(ctx: &egui::Context) {
             );
             list.push(name.to_owned());
         }
+        list.push("lucide".to_owned());
         list.extend(fallback.iter().cloned());
         fonts.families.insert(family, list);
     };

@@ -131,60 +131,21 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
 
 /// Small line icons drawn with the painter (the original uses monochrome outline icons).
 pub fn draw_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
-    let st = Stroke::new(1.3, color);
-    match name {
-        "home" => {
-            p.line_segment([pos2(c.x - 6.0, c.y - 0.5), pos2(c.x, c.y - 6.0)], st);
-            p.line_segment([pos2(c.x, c.y - 6.0), pos2(c.x + 6.0, c.y - 0.5)], st);
-            p.rect_stroke(Rect::from_min_max(pos2(c.x - 4.5, c.y - 2.0), pos2(c.x + 4.5, c.y + 5.5)), 1.5, st, StrokeKind::Middle);
-        }
-        "clock" => {
-            p.circle_stroke(c, 6.0, st);
-            p.line_segment([c, pos2(c.x, c.y - 3.5)], st);
-            p.line_segment([c, pos2(c.x + 2.8, c.y + 1.2)], st);
-        }
-        "book" => {
-            p.rect_stroke(Rect::from_min_max(pos2(c.x - 5.0, c.y - 6.0), pos2(c.x + 5.0, c.y + 6.0)), 1.5, st, StrokeKind::Middle);
-            p.line_segment([pos2(c.x - 5.0, c.y + 3.0), pos2(c.x + 5.0, c.y + 3.0)], st);
-        }
-        "mic" => {
-            p.rect_stroke(Rect::from_center_size(pos2(c.x, c.y - 2.5), vec2(6.0, 9.0)), 3.0, st, StrokeKind::Middle);
-            let arc: Vec<egui::Pos2> = (0..=8)
-                .map(|k| {
-                    let a = std::f32::consts::PI * k as f32 / 8.0;
-                    pos2(c.x + 5.0 * a.cos(), c.y + 0.5 + 4.0 * a.sin())
-                })
-                .collect();
-            p.add(egui::Shape::line(arc, st));
-            p.line_segment([pos2(c.x, c.y + 4.5), pos2(c.x, c.y + 6.5)], st);
-        }
-        "gear" => {
-            p.circle_stroke(c, 2.2, st);
-            p.circle_stroke(c, 4.8, st);
-            for k in 0..8 {
-                let a = k as f32 * std::f32::consts::TAU / 8.0;
-                let d = vec2(a.cos(), a.sin());
-                p.line_segment([c + d * 4.8, c + d * 6.6], Stroke::new(1.8, color));
-            }
-        }
-        "help" | "info" => {
-            p.circle_stroke(c, 6.0, st);
-            let ch = if name == "help" { "?" } else { "i" };
-            p.text(c, Align2::CENTER_CENTER, ch, FontId::new(9.0, theme::bold()), color);
-        }
-        "spark" => {
-            let pts = [(0.0, -6.0), (1.6, -1.6), (6.0, 0.0), (1.6, 1.6), (0.0, 6.0), (-1.6, 1.6), (-6.0, 0.0), (-1.6, -1.6)];
-            let v: Vec<egui::Pos2> = pts.iter().map(|(x, y)| pos2(c.x + x, c.y + y)).collect();
-            p.add(egui::Shape::closed_line(v, st));
-        }
-        "close" => {
-            p.line_segment([pos2(c.x - 4.0, c.y - 4.0), pos2(c.x + 4.0, c.y + 4.0)], st);
-            p.line_segment([pos2(c.x + 4.0, c.y - 4.0), pos2(c.x - 4.0, c.y + 4.0)], st);
-        }
-        other => {
-            p.text(c, Align2::CENTER_CENTER, other, FontId::proportional(13.0), color);
-        }
-    }
+    // Lucide glyphs, keyed by the names the call sites already use, so adding
+    // an icon here is a one line change and nothing else moves.
+    let glyph = match name {
+        "home" => crate::icon::HOUSE,
+        "clock" => crate::icon::HISTORY,
+        "book" => crate::icon::BOOK,
+        "mic" => crate::icon::MIC,
+        "gear" => crate::icon::SETTINGS,
+        "help" | "info" => crate::icon::HELP,
+        "spark" => crate::icon::SPARKLES,
+        "close" => crate::icon::X,
+        // Anything unknown still shows itself, which is easier to spot than a blank.
+        other => other,
+    };
+    p.text(c, Align2::CENTER_CENTER, glyph, FontId::proportional(17.0), color);
 }
 
 fn logo(ui: &mut egui::Ui) {
@@ -270,7 +231,7 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         ui.add_space(0.0);
         ui.label(m("Insights", 24.0, Color32::from_rgb(0xB8, 0xB8, 0xB8)));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = egui::Button::new(m("⬆ Share", 14.0, theme::TEXT))
+            let btn = egui::Button::new(m(format!("{} Share", crate::icon::SHARE), 14.0, theme::TEXT))
                 .fill(Color32::from_rgb(0x1C, 0x1C, 0x1C))
                 .stroke(Stroke::new(1.0, theme::LINE))
                 .corner_radius(16);
@@ -485,9 +446,9 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     // Start button, for clicking instead of using a shortcut.
     let rec = app.recording.as_ref().map(|(_, a, _)| *a);
     let (label, fill) = match (rec, &app.busy) {
-        (Some(_), _) => ("■  Stop & paste", theme::RED),
-        (None, Some(_)) => ("Thinking…", Color32::from_rgb(0x48, 0x48, 0x48)),
-        _ => ("🎤  Start dictating", theme::ACCENT),
+        (Some(_), _) => (format!("{}  Stop & paste", crate::icon::SQUARE), theme::RED),
+        (None, Some(_)) => ("Thinking…".to_string(), Color32::from_rgb(0x48, 0x48, 0x48)),
+        _ => (format!("{}  Start dictating", crate::icon::MIC), theme::ACCENT),
     };
     let btn = egui::Button::new(b(label, 14.0, Color32::WHITE)).fill(fill).corner_radius(14).min_size(vec2(186.0, 42.0));
     if ui.add_enabled(app.busy.is_none(), btn).clicked() {
@@ -618,7 +579,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(b("History", 38.0, theme::TEXT));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.menu_button(t("⋯", 18.0, theme::MUTED), |ui| {
+            ui.menu_button(t(crate::icon::ELLIPSIS, 18.0, theme::MUTED), |ui| {
                 if ui.button("Copy all as text").clicked() {
                     let all = app.history.iter().rev().filter(|e| e.error.is_none()).map(|e| e.text.clone()).collect::<Vec<_>>().join("\n\n");
                     ui.ctx().copy_text(all);
@@ -629,7 +590,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
                     ui.close();
                 }
             });
-            ui.label(t("🔒 Stored only on this Mac", 14.0, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
+            ui.label(t(format!("{} Stored only on this Mac", crate::icon::LOCK), 14.0, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
         });
     });
     ui.add_space(10.0);
@@ -637,7 +598,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(m("🗄 Keep history", 14.0, theme::TEXT));
+                ui.label(m(format!("{} Keep history", crate::icon::ARCHIVE), 14.0, theme::TEXT));
                 ui.label(t("Choose how long to keep your history on this device.", 14.0, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -656,7 +617,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
         ui.painter().rect_filled(r, 0.0, theme::LINE);
         ui.add_space(6.0);
-        ui.label(m("🔒 Your data stays yours", 14.0, theme::TEXT));
+        ui.label(m(format!("{} Your data stays yours", crate::icon::LOCK), 14.0, theme::TEXT));
         ui.label(t(
             "Recordings and text are kept only on this Mac. Your voice goes only to the speech and text models you chose in Models.",
             14.0,
@@ -731,7 +692,7 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
             ui.vertical(|ui| {
                 ui.set_width(text_w);
                 if let Some(err) = &e.error {
-                    ui.label(t(format!("{err}  ⓘ"), 14.0, Color32::from_rgb(0xB8, 0xB8, 0xB8)))
+                    ui.label(t(format!("{err}  {}", crate::icon::INFO), 14.0, Color32::from_rgb(0xB8, 0xB8, 0xB8)))
                         .on_hover_text(format!("{} · {:.1}s recording", e.action.label(), e.seconds));
                 } else if let Some((_, text)) = app.editing.as_mut().filter(|(w, _)| *w == e.when) {
                     ui.add(egui::TextEdit::multiline(text).desired_width(text_w).desired_rows(3));
@@ -765,7 +726,7 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                 }
             });
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                ui.menu_button(t("⋯", 15.0, theme::MUTED), |ui| {
+                ui.menu_button(t(crate::icon::ELLIPSIS, 15.0, theme::MUTED), |ui| {
                     if e.error.is_none() {
                         if ui.button("Copy").clicked() {
                             ui.ctx().copy_text(e.text.clone());
@@ -790,7 +751,7 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                     }
                 });
                 if e.error.is_some() && e.audio.is_some() {
-                    let btn = egui::Button::new(m("↻ Retry", 14.0, theme::TEXT)).fill(Color32::from_rgb(0x44, 0x44, 0x44)).corner_radius(6);
+                    let btn = egui::Button::new(m(format!("{} Retry", crate::icon::ROTATE), 14.0, theme::TEXT)).fill(Color32::from_rgb(0x44, 0x44, 0x44)).corner_radius(6);
                     if ui.add_enabled(app.busy.is_none(), btn).clicked() {
                         out = Some(RowAction::Retry);
                     }
@@ -822,11 +783,15 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        pill_tabs(ui, &mut app.dict_filter, &[(0, "All"), (1, "✦ Auto-added"), (2, "✎ Manually-added")]);
+        let (auto_tab, manual_tab) = (
+            format!("{}  Auto-added", crate::icon::SPARKLES),
+            format!("{}  Manually-added", crate::icon::PENCIL),
+        );
+        pill_tabs(ui, &mut app.dict_filter, &[(0, "All"), (1, &auto_tab), (2, &manual_tab)]);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let (r, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
             ui.painter().circle_filled(r.center(), 16.0, Color32::from_rgb(0x3C, 0x3C, 0x3C));
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "🔍", FontId::proportional(12.0), theme::MUTED);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::icon::SEARCH, FontId::proportional(13.0), theme::MUTED);
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 app.dict_search = if app.dict_search.is_some() { None } else { Some(String::new()) };
             }
@@ -901,7 +866,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
                 let p = ui.painter();
                 p.rect_filled(r, 6.0, Color32::from_rgb(0x26, 0x26, 0x26));
                 p.rect_stroke(r, 6.0, Stroke::new(1.0, Color32::from_rgb(0x33, 0x33, 0x33)), StrokeKind::Inside);
-                let (icon, c) = if d.auto { ("✦", theme::GREEN) } else { ("✎", theme::FAINT) };
+                let (icon, c) = if d.auto { (crate::icon::SPARKLES, theme::GREEN) } else { (crate::icon::PENCIL, theme::FAINT) };
                 p.text(pos2(r.left() + 18.0, r.center().y), Align2::CENTER_CENTER, icon, FontId::proportional(11.0), c);
                 p.text(pos2(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, &d.word, FontId::new(14.0, theme::medium()), theme::TEXT);
                 if resp.hovered() {

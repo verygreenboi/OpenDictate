@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod engines;
+mod icon;
 mod settings;
 mod settings_view;
 mod stats;

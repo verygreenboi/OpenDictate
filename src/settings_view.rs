@@ -129,7 +129,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     let health = app.health.lock().unwrap().clone();
     let mut changed = false;
 
-    section(ui, "🎤", "Speech to text");
+    section(ui, crate::icon::MIC, "Speech to text");
     row(ui, "Engine", "Where your recordings are turned into text.", 300.0, |ui| {
         changed |= ui.radio_value(&mut app.s.speech_engine, SpeechEngine::WhisperLocal, "whisper.cpp on this Mac").changed();
         changed |= ui.radio_value(&mut app.s.speech_engine, SpeechEngine::OpenAiCompatible, "OpenAI-compatible server").changed();
@@ -139,8 +139,8 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             row(ui, "whisper.cpp program", "The whisper-cli command (brew install whisper-cpp).", 300.0, |ui| {
                 changed |= ui.add(egui::TextEdit::singleline(&mut app.s.whisper_bin).desired_width(300.0)).changed();
                 match &health.whisper_bin {
-                    Some(p) => ui.label(t(format!("✔ Found at {}", p.display()), 12.5, theme::GREEN)),
-                    None if health.checked => ui.label(t("✖ Not found", 12.5, theme::RED)),
+                    Some(p) => ui.label(t(format!("{} Found at {}", crate::icon::CHECK, p.display()), 12.5, theme::GREEN)),
+                    None if health.checked => ui.label(t(format!("{} Not found", crate::icon::X), 12.5, theme::RED)),
                     None => ui.label(t("Checking…", 12.5, theme::MUTED)),
                 };
             });
@@ -183,7 +183,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                             if have {
                                 let path = crate::settings::models_dir().join(choice.file).to_string_lossy().into_owned();
                                 if app.s.whisper_model == path {
-                                    ui.label(t("✔ In use", 13.0, theme::GREEN));
+                                    ui.label(t(format!("{} In use", crate::icon::CHECK), 13.0, theme::GREEN));
                                 } else if ui.button("Use").clicked() {
                                     app.s.whisper_model = path;
                                     changed = true;
@@ -216,7 +216,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         changed |= ui.add(egui::TextEdit::singleline(&mut app.s.language).desired_width(120.0)).changed();
     });
 
-    section(ui, "✨", "Text clean-up");
+    section(ui, crate::icon::WAND, "Text clean-up");
     row(ui, "Engine", "What tidies up, translates and answers.", 300.0, |ui| {
         changed |= ui.radio_value(&mut app.s.text_engine, TextEngine::Ollama, "Ollama on this Mac").changed();
         changed |= ui.radio_value(&mut app.s.text_engine, TextEngine::OpenAiCompatible, "OpenAI-compatible server").changed();
@@ -228,11 +228,11 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 changed |= ui.add(egui::TextEdit::singleline(&mut app.s.ollama_url).desired_width(300.0)).changed();
                 match &health.ollama {
                     Some(Ok(list)) => {
-                        ui.label(t(format!("✔ Running · {} model{}", list.len(), if list.len() == 1 { "" } else { "s" }), 12.5, theme::GREEN));
+                        ui.label(t(format!("{} Running · {} model{}", crate::icon::CHECK, list.len(), if list.len() == 1 { "" } else { "s" }), 12.5, theme::GREEN));
                     }
                     Some(Err(_)) => {
                         ui.horizontal(|ui| {
-                            ui.label(t("✖ Not running", 12.5, theme::RED));
+                            ui.label(t(format!("{} Not running", crate::icon::X), 12.5, theme::RED));
                             if ui.small_button("Start Ollama").clicked() {
                                 match engines::start_ollama() {
                                     Ok(()) => app.notify("Starting Ollama…", false),
@@ -335,7 +335,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         TextEngine::Off => {}
     }
 
-    section(ui, "🧪", "Try it");
+    section(ui, crate::icon::FLASK, "Try it");
     ui.label(t("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
     ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(f32::INFINITY).desired_rows(2));
     let running = app.test_running.load(std::sync::atomic::Ordering::SeqCst);
@@ -361,7 +361,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 
 fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(b("Settings", 24.0, theme::TEXT));
-    section(ui, "⌨", "Shortcuts");
+    section(ui, crate::icon::KEYBOARD, "Shortcuts");
     ui.horizontal(|ui| {
         let mut hold = app.s.hold_to_talk;
         ui.selectable_value(&mut hold, false, "Press to start, press to stop");
@@ -413,14 +413,14 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         });
     }
     for e in app.hotkey_errors.clone() {
-        ui.label(t(format!("⚠ {e}"), 12.5, theme::RED));
+        ui.label(t(format!("{} {e}", crate::icon::WARN), 12.5, theme::RED));
     }
     if keys_changed {
         app.changed();
         app.register_hotkeys();
     }
 
-    section(ui, "🌐", "Language");
+    section(ui, crate::icon::GLOBE, "Language");
     let langs = [
         "Spanish", "French", "German", "Portuguese", "Italian", "English", "Yoruba", "Igbo", "Hausa", "Chinese", "Japanese", "Korean", "Arabic", "Hindi",
     ];
@@ -442,7 +442,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         }
     });
 
-    section(ui, "📋", "Output");
+    section(ui, crate::icon::CLIPBOARD, "Output");
     let mut c = false;
     row(ui, "Paste into the app I'm using", "Otherwise the text is only copied.", 204.0, |ui| {
         c |= ui.checkbox(&mut app.s.auto_paste, "").changed();
@@ -465,7 +465,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 
 fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(b("Audio input", 24.0, theme::TEXT));
-    section(ui, "🎙", "Microphone");
+    section(ui, crate::icon::MIC_VOCAL, "Microphone");
     let mut changed = false;
     row(ui, "Microphone", "Which microphone records your voice.", 260.0, |ui| {
         let default_label = match &app.default_mic {
@@ -481,7 +481,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             }
         });
         if !mic.is_empty() && !app.mics.contains(&mic) {
-            ui.label(t("⚠ This microphone isn't connected; the system default is used.", 12.5, theme::RED));
+            ui.label(t(format!("{} This microphone isn't connected; the system default is used.", crate::icon::WARN), 12.5, theme::RED));
         }
         if mic != app.s.microphone {
             app.s.microphone = mic;
@@ -512,17 +512,17 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         }
         if let Some(r) = &app.mic_test {
             if let Some(e) = r.error() {
-                ui.label(t(format!("⚠ The microphone stopped: {e}"), 12.5, theme::RED));
+                ui.label(t(format!("{} The microphone stopped: {e}", crate::icon::WARN), 12.5, theme::RED));
             } else if r.sample_count() == 0 && r.elapsed() > 1.5 {
-                ui.label(t("⚠ No sound is arriving from this microphone. Try another one or reconnect it.", 12.5, theme::RED));
+                ui.label(t(format!("{} No sound is arriving from this microphone. Try another one or reconnect it.", crate::icon::WARN), 12.5, theme::RED));
             } else if r.elapsed() > 1.5 && r.peak() == 0.0 {
                 // Exact digital silence on a live device is what macOS sends when access is blocked.
-                ui.label(t("⚠ macOS is blocking the microphone (it only sends silence).", 12.5, theme::RED));
+                ui.label(t(format!("{} macOS is blocking the microphone (it only sends silence).", crate::icon::WARN), 12.5, theme::RED));
                 if ui.small_button("Open microphone privacy settings").clicked() {
                     open_mic_privacy();
                 }
             } else {
-                ui.label(t(if frac < 0.03 { "Not hearing anything yet…" } else { "Hearing you ✔" }, 12.5, theme::MUTED));
+                ui.label(t(if frac < 0.03 { "Not hearing anything yet…".to_string() } else { format!("Hearing you {}", crate::icon::CHECK) }, 12.5, theme::MUTED));
             }
             ui.label(t(r.info(), 11.5, theme::FAINT));
         }
@@ -538,7 +538,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             app.toggle_mic_test();
         }
     }
-    section(ui, "🔒", "Permission");
+    section(ui, crate::icon::LOCK, "Permission");
     row(
         ui,
         "Microphone access",
@@ -560,7 +560,7 @@ pub fn open_mic_privacy() {
 
 fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(b("Personalization", 24.0, theme::TEXT));
-    section(ui, "🎨", "Tone");
+    section(ui, crate::icon::PALETTE, "Tone");
     let w = (ui.available_width() - 24.0) / 4.0;
     ui.horizontal(|ui| {
         for tone in Tone::ALL {
@@ -582,7 +582,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             }
         }
     });
-    section(ui, "🧹", "Clean-up");
+    section(ui, crate::icon::ERASER, "Clean-up");
     let mut c = false;
     row(ui, "Remove filler words", "Drops um, uh, like, you know.", 60.0, |ui| {
         c |= ui.checkbox(&mut app.s.remove_fillers, "").changed();
@@ -593,17 +593,17 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     row(ui, "Auto-format", "Turns spoken lists into bullet points and splits paragraphs.", 60.0, |ui| {
         c |= ui.checkbox(&mut app.s.auto_format, "").changed();
     });
-    section(ui, "📝", "Your own instructions");
+    section(ui, crate::icon::PENCIL_LINE, "Your own instructions");
     ui.label(t("Anything else your text model should always do, e.g. \"Use British spelling.\"", 13.5, theme::MUTED));
     c |= ui.add(egui::TextEdit::multiline(&mut app.s.custom_instructions).desired_width(f32::INFINITY).desired_rows(3)).changed();
-    section(ui, "⏱", "Time saved");
+    section(ui, crate::icon::TIMER, "Time saved");
     row(ui, "Your typing speed", "Used to work out the time saved on Home.", 220.0, |ui| {
         c |= ui.add(egui::Slider::new(&mut app.s.typing_wpm, 15.0..=120.0).suffix(" WPM")).changed();
     });
     if c {
         app.changed();
     }
-    section(ui, "👁", "What your text model is told");
+    section(ui, crate::icon::EYE, "What your text model is told");
     egui::Frame::new().fill(Color32::from_rgb(0x2A, 0x2A, 0x2A)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.label(t(engines::polish_prompt(&app.s, false), 12.5, theme::MUTED));
@@ -619,13 +619,13 @@ fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         13.5,
         theme::MUTED,
     ));
-    section(ui, "📁", "Your data");
+    section(ui, crate::icon::FOLDER, "Your data");
     let dir = crate::settings::data_dir();
     ui.label(t(dir.display().to_string(), 13.0, theme::MUTED));
     if ui.button("Open folder").clicked() {
         let _ = std::process::Command::new("open").arg(&dir).spawn();
     }
-    section(ui, "📊", "Totals");
+    section(ui, crate::icon::CHART, "Totals");
     ui.label(t(
         format!("{} dictations · {} words · {} in history", app.stats.sessions, app.stats.words, app.history.len()),
         13.5,
