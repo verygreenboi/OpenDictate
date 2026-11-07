@@ -5,6 +5,7 @@ mod settings;
 mod settings_view;
 mod stats;
 mod theme;
+mod tray;
 mod views;
 
 #[cfg(target_os = "macos")]

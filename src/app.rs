@@ -6,6 +6,7 @@ use crate::engines::{self, SharedProgress};
 use crate::settings::{self, Action, DictWord, Entry, Settings, TextEngine};
 use crate::stats::Stats;
 use crate::theme;
+use crate::tray::Tray;
 use eframe::egui;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use std::path::PathBuf;
@@ -13,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tray_icon::menu::MenuEvent;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -105,6 +107,17 @@ pub struct DictateApp {
     shot: Option<PathBuf>,
     frames: u32,
     shot_done: Arc<AtomicBool>,
+
+    /// Menu bar icon and the channel its clicks arrive on. Absent in
+    /// screenshot mode, and on any system that refuses the icon.
+    tray: Option<Tray>,
+    tray_rx: Option<Receiver<MenuEvent>>,
+    /// True while the window is hidden after a close. Frames stop arriving for
+    /// an invisible window, so the pump below keeps the event loop turning.
+    hidden: bool,
+    /// Set by the menu bar's Quit, so the close that follows is a real one
+    /// rather than another hide.
+    quitting: bool,
 }
 
 impl DictateApp {
@@ -163,6 +176,10 @@ impl DictateApp {
             shot,
             frames: 0,
             shot_done: Default::default(),
+            tray: None,
+            tray_rx: None,
+            hidden: false,
+            quitting: false,
         };
         // Lets a screenshot start on another screen: --page history|dictionary|models|settings|personal
         let args: Vec<String> = std::env::args().collect();
@@ -182,9 +199,48 @@ impl DictateApp {
         if app.shot.is_none() {
             app.hotkeys = GlobalHotKeyManager::new().ok();
             app.register_hotkeys();
+            if let Some((t, rx)) = crate::tray::build(&cc.egui_ctx) {
+                app.tray = Some(t);
+                app.tray_rx = Some(rx);
+            }
         }
         app.refresh_health(&cc.egui_ctx);
         app
+    }
+
+    /// Keeps the app running when its window is closed.
+    ///
+    /// The shortcuts only work while the process is alive, so closing the
+    /// window hides it instead of quitting; the menu bar icon brings it back
+    /// and is the only way to quit for real. Screenshot mode is left alone,
+    /// because it closes the window to signal that it has finished.
+    ///
+    /// A hidden window is sent no frames, and this runs once per frame, so
+    /// while hidden it keeps asking for repaints. Without that pump the
+    /// shortcuts and the menu below are never read and the app only looks alive.
+    fn window_lifecycle(&mut self, ctx: &egui::Context) {
+        let ids = self.tray.as_ref().map(|t| (t.show.clone(), t.quit.clone()));
+        let clicks: Vec<MenuEvent> = self.tray_rx.as_ref().map_or_else(Vec::new, |rx| rx.try_iter().collect());
+        if let Some((show, quit)) = ids {
+            for e in clicks {
+                if e.id == show {
+                    self.hidden = false;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                } else if e.id == quit {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        if self.shot.is_none() && !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hidden = true;
+        }
+        if self.hidden {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
     }
 
     pub fn changed(&mut self) {
@@ -673,6 +729,7 @@ impl DictateApp {
 
 impl eframe::App for DictateApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.window_lifecycle(ctx);
         while let Ok(e) = self.hk_rx.try_recv() {
             if self.capturing_key.is_none() {
                 self.on_hotkey(ctx, e);
