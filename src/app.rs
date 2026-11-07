@@ -113,9 +113,10 @@ pub struct DictateApp {
     tray: Option<Tray>,
     tray_rx: Option<Receiver<MenuEvent>>,
     tray_state: crate::tray::State,
-    /// True while the window is hidden after a close. Frames stop arriving for
-    /// an invisible window, so the pump below keeps the event loop turning.
-    hidden: bool,
+    /// Whether the real window is on screen. It is a child of the 1x1 root
+    /// viewport, so "closed" simply means we stop showing it.
+    window_open: bool,
+    focus_main: bool,
     /// Set by the menu bar's Quit, so the close that follows is a real one
     /// rather than another hide.
     quitting: bool,
@@ -180,7 +181,8 @@ impl DictateApp {
             tray: None,
             tray_rx: None,
             tray_state: crate::tray::State::Idle,
-            hidden: false,
+            window_open: true,
+            focus_main: false,
             quitting: false,
         };
         // Lets a screenshot start on another screen: --page history|dictionary|models|settings|personal
@@ -226,31 +228,22 @@ impl DictateApp {
         if let Some((show, quit)) = ids {
             for e in clicks {
                 if e.id == show {
-                    self.hidden = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1360.0, 920.0)));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(140.0, 100.0)));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                    self.window_open = true;
+                    self.focus_main = true;
                 } else if e.id == quit {
                     self.quitting = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
         }
+        // A closing root means quit; the real window closes on its own below.
         if self.shot.is_none() && !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            // Parked off-screen rather than hidden. egui renders nothing at all
-            // once the root window is hidden - not ui(), not child viewports -
-            // so the recording indicator would never appear. A 1x1 window far
-            // off-screen keeps frames coming while being invisible in practice.
-            ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
-            self.hidden = true;
         }
-        if self.hidden {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
-        }
+        // The root is tiny and always drawn, but egui is still only redrawing
+        // on demand. This keeps shortcuts and menu clicks being read while the
+        // app sits idle in the background.
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
         // A lit menu bar icon, so the state is visible even when the indicator
         // is not where the eye happens to be.
@@ -664,6 +657,31 @@ impl DictateApp {
     // -----------------------------------------------------------------------
     // Floating indicator
 
+    /// The real window, drawn as a child of the 1x1 root viewport.
+    ///
+    /// Closing it just stops this being called, so the app and its shortcuts
+    /// carry on, and the root keeps producing the frames the indicator needs.
+    fn main_window(&mut self, ctx: &egui::Context) {
+        if !self.window_open {
+            return;
+        }
+        let builder = egui::ViewportBuilder::default()
+            .with_title("Open Dictate")
+            .with_inner_size([1360.0, 920.0])
+            .with_min_inner_size([980.0, 640.0]);
+        let focus = std::mem::take(&mut self.focus_main);
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("main"), builder, |ui, _| {
+            let vctx = ui.ctx().clone();
+            if focus {
+                vctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            if vctx.input(|i| i.viewport().close_requested()) {
+                self.window_open = false;
+            }
+            crate::views::draw(self, ui);
+        });
+    }
+
     fn indicator(&mut self, ctx: &egui::Context) {
         let state = if let Some((rec, a, _)) = &self.recording {
             Some((true, *a, rec.level(), rec.elapsed()))
@@ -804,12 +822,12 @@ impl eframe::App for DictateApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.screenshot_step(&ctx);
-        crate::views::draw(self, ui);
-        // Must stay in ui(). Calling show_viewport_immediate from logic() while
-        // the main window is hidden panics inside egui ("the user callback was
-        // never called"), because nothing renders then: ui() does not run and
-        // deferred viewport callbacks do not either. So while the window is
-        // closed a dictation runs with no indicator on screen.
+        if self.shot.is_some() {
+            // Screenshot mode: the root really is the window being captured.
+            crate::views::draw(self, ui);
+        } else {
+            self.main_window(&ctx);
+        }
         self.indicator(&ctx);
     }
 

@@ -99,11 +99,31 @@ fn main() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // egui only produces frames while the system is drawing the root window,
+    // and macOS stops drawing one that is closed or buried behind other apps.
+    // That made the recording indicator impossible to create at the moment it
+    // was most wanted. So the root is a permanent 1x1 window tucked under the
+    // menu bar, where nothing ever covers it: frames keep arriving, and the
+    // real window hangs off it as a child viewport.
+    //
+    // Screenshot mode keeps the old shape, with the real window as the root,
+    // because that is what gets captured.
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Open Dictate")
-            .with_inner_size([1360.0, 920.0])
-            .with_min_inner_size([980.0, 640.0]),
+        viewport: if screenshot.is_some() {
+            eframe::egui::ViewportBuilder::default()
+                .with_title("Open Dictate")
+                .with_inner_size([1360.0, 920.0])
+                .with_min_inner_size([980.0, 640.0])
+        } else {
+            eframe::egui::ViewportBuilder::default()
+                .with_title("Open Dictate")
+                .with_inner_size([1.0, 1.0])
+                .with_position([0.0, 0.0])
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(false)
+                .with_active(false)
+        },
         ..Default::default()
     };
     eframe::run_native(
