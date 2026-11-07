@@ -20,7 +20,9 @@ pub const LINE: Color32 = Color32::from_rgba_premultiplied(0x22, 0x22, 0x1E, 0xF
 pub const TEXT: Color32 = INK;
 /// Ink stepped back, for secondary copy.
 pub const MUTED: Color32 = Color32::from_rgb(0xA8, 0xA7, 0xA2);
-pub const FAINT: Color32 = Color32::from_rgb(0x79, 0x78, 0x73);
+// Lifted off the kit's value: at #797873 this was 3.78:1 on surface, and it
+// carries small print, which needs 4.5.
+pub const FAINT: Color32 = Color32::from_rgb(0x8B, 0x8A, 0x85);
 /// --follow. The kit's blue reads as settled and working.
 pub const ACCENT: Color32 = Color32::from_rgb(0x8F, 0xB6, 0xEF);
 /// --convert, used where the old theme said green: a thing that is fine.
@@ -32,6 +34,13 @@ pub const AMBER: Color32 = Color32::from_rgb(0xF2, 0xC3, 0x1A);
 /// --y1 and --y3, for the softer and heavier ends of yellow.
 pub const Y1: Color32 = Color32::from_rgb(0xF8, 0xE0, 0x8A);
 pub const Y3: Color32 = Color32::from_rgb(0xC9, 0x8F, 0x06);
+/// What sits on top of a light fill: ink, accent, red or yellow all take
+/// paper, as the kit's --on-red and --on-yellow do. White on the kit's blue is
+/// about 2.1:1, which is why it has no such token.
+pub const ON_FILL: Color32 = PAPER;
+/// Paper stepped back, for secondary copy on a light fill.
+pub const ON_FILL_DIM: Color32 = Color32::from_rgb(0x4A, 0x49, 0x44);
+
 /// Hard offset shadow, the kit's signature. Drawn, not blurred.
 pub const SHADOW: Color32 = INK;
 pub const HEAT: [Color32; 4] = [

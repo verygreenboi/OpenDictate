@@ -116,7 +116,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
                 let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 3.0), Sense::hover());
                 ui.painter().rect_filled(r, 2.0, if all_ok { theme::GREEN } else { theme::RED });
                 ui.add_space(6.0);
-                let btn = egui::Button::new(b("Manage models", 15.0, Color32::WHITE))
+                let btn = egui::Button::new(b("Manage models", 15.0, theme::ON_FILL))
                     .fill(theme::ACCENT)
                     .corner_radius(18)
                     .min_size(vec2(ui.available_width(), 38.0));
@@ -450,7 +450,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
         (None, Some(_)) => ("Thinking…".to_string(), Color32::from_rgb(0x48, 0x48, 0x48)),
         _ => (format!("{}  Start dictating", crate::icon::MIC), theme::ACCENT),
     };
-    let btn = egui::Button::new(b(label, 14.0, Color32::WHITE)).fill(fill).corner_radius(14).min_size(vec2(186.0, 42.0));
+    let btn = egui::Button::new(b(label, 14.0, theme::ON_FILL)).fill(fill).corner_radius(14).min_size(vec2(186.0, 42.0));
     if ui.add_enabled(app.busy.is_none(), btn).clicked() {
         if rec.is_some() {
             let ctx = ui.ctx().clone();
@@ -812,7 +812,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
                     r.request_focus();
                 }
                 add = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                add |= ui.add(egui::Button::new(b("Add", 14.0, Color32::WHITE)).fill(theme::ACCENT)).clicked();
+                add |= ui.add(egui::Button::new(b("Add", 14.0, theme::ON_FILL)).fill(theme::ACCENT)).clicked();
                 cancel = ui.button("Cancel").clicked();
             });
         });

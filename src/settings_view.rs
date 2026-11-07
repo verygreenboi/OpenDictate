@@ -336,7 +336,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(para("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
     ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(f32::INFINITY).desired_rows(2));
     let running = app.test_running.load(std::sync::atomic::Ordering::SeqCst);
-    let btn = egui::Button::new(b(if running { "Running…" } else { "Run test" }, 14.0, Color32::WHITE)).fill(theme::ACCENT);
+    let btn = egui::Button::new(b(if running { "Running…" } else { "Run test" }, 14.0, theme::ON_FILL)).fill(theme::ACCENT);
     if ui.add_enabled(!running, btn).clicked() {
         app.run_test(&ctx);
     }
@@ -503,7 +503,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         let testing = app.mic_test.is_some();
         let label = if testing { "Stop test" } else { "Test microphone" };
-        let btn = egui::Button::new(m(label, 13.5, Color32::WHITE)).fill(if testing { theme::RED } else { theme::ACCENT });
+        let btn = egui::Button::new(m(label, 13.5, theme::ON_FILL)).fill(if testing { theme::RED } else { theme::ACCENT });
         if ui.add_enabled(app.recording.is_none(), btn).clicked() {
             app.toggle_mic_test();
         }
@@ -564,14 +564,14 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             let active = app.s.tone == tone;
             let resp = egui::Frame::new()
                 .fill(if active { theme::INK } else { theme::SURFACE })
-                .stroke(Stroke::new(1.0, if active { theme::ACCENT } else { Color32::from_rgb(0x44, 0x44, 0x44) }))
+                .stroke(Stroke::new(2.0, theme::INK))
                 .corner_radius(10)
                 .inner_margin(Margin::same(10))
                 .show(ui, |ui| {
                     ui.set_width(w - 22.0);
                     ui.set_min_height(56.0);
-                    ui.label(m(tone.label(), 14.0, theme::TEXT));
-                    ui.label(t(tone.blurb(), 12.0, theme::MUTED));
+                    ui.label(m(tone.label(), 14.0, if active { theme::ON_FILL } else { theme::TEXT }));
+                    ui.label(t(tone.blurb(), 12.0, if active { theme::ON_FILL_DIM } else { theme::MUTED }));
                 });
             if ui.interact(resp.response.rect, ui.id().with(tone.label()), Sense::click()).clicked() {
                 app.s.tone = tone;
