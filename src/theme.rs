@@ -41,8 +41,10 @@ pub const ON_FILL: Color32 = PAPER;
 /// Paper stepped back, for secondary copy on a light fill.
 pub const ON_FILL_DIM: Color32 = Color32::from_rgb(0x4A, 0x49, 0x44);
 
-/// Hard offset shadow, the kit's signature. Drawn, not blurred.
-pub const SHADOW: Color32 = INK;
+/// --soft-shadow. Still hard edged, but translucent black rather than ink.
+/// The kit reserves the full ink shadow for things you press; content cards
+/// get this, which is why they do not shout.
+pub const SOFT_SHADOW: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 115);
 pub const HEAT: [Color32; 4] = [
     Color32::from_rgb(0x2B, 0x3A, 0x55),
     Color32::from_rgb(0x44, 0x63, 0x96),
@@ -60,24 +62,33 @@ pub fn display() -> FontFamily {
     FontFamily::Name("display".into())
 }
 
-/// A surface in the kit's hand: thick ink outline and a hard offset shadow.
+/// A surface in the kit's hand: thick outline and a hard offset shadow.
 ///
-/// The shadow is drawn, never blurred - blur 0 is what makes it read as ink on
-/// paper rather than a drop shadow. `lift` is how far it sits behind.
-pub fn ink(fill: Color32, radius: u8, border: f32, lift: i8) -> egui::Frame {
+/// The shadow is never blurred - blur 0 is what makes it read as ink on paper
+/// rather than a drop shadow. Its colour is the choice that matters: ink for
+/// something you press, soft for something you only read.
+pub fn surface(fill: Color32, radius: u8, border: f32, lift: i8, shadow: Color32) -> egui::Frame {
     egui::Frame::new()
         .fill(fill)
         .stroke(egui::Stroke::new(border, INK))
         .corner_radius(egui::CornerRadius::same(radius))
-        .shadow(egui::epaint::Shadow { offset: [lift, lift + 1], blur: 0, spread: 0, color: INK })
+        .shadow(egui::epaint::Shadow { offset: [lift, lift + 1], blur: 0, spread: 0, color: shadow })
 }
-/// --r-square sized card: 2.5px outline, 3/4 shadow.
+/// Content you read. Matches the kit's .card: 2.5px outline, 6/7 soft shadow.
 pub fn ink_card() -> egui::Frame {
-    ink(SURFACE, 16, 2.5, 3)
+    surface(SURFACE, 15, 2.5, 6, SOFT_SHADOW)
 }
-/// --r-panel sized panel: 3px outline, 5/6 shadow.
+/// A larger reading surface. Matches .step-card and .menu: 3px, 7/8 soft.
 pub fn ink_panel() -> egui::Frame {
-    ink(SURFACE, 22, 3.0, 5)
+    surface(SURFACE, 18, 3.0, 7, SOFT_SHADOW)
+}
+/// Another surface you only read, at a size of its own choosing.
+pub fn soft(fill: Color32, radius: u8, border: f32, lift: i8) -> egui::Frame {
+    surface(fill, radius, border, lift, SOFT_SHADOW)
+}
+/// Something you press. Keeps the full ink shadow, as .inspect does.
+pub fn ink(fill: Color32, radius: u8, border: f32, lift: i8) -> egui::Frame {
+    surface(fill, radius, border, lift, INK)
 }
 
 pub fn t(s: impl Into<String>, size: f32, color: Color32) -> RichText {

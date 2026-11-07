@@ -161,7 +161,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             for choice in engines::WHISPER_MODELS {
                 let have = local.iter().any(|p| p.file_name().is_some_and(|f| f == choice.file));
-                theme::ink(theme::SURFACE, 12, 2.0, 2).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                theme::soft(theme::SURFACE, 12, 2.0, 2).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
@@ -341,7 +341,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         app.run_test(&ctx);
     }
     if let Some(r) = app.test_output.lock().unwrap().clone() {
-        theme::ink(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+        theme::soft(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match r {
                 Ok(text) => ui.label(t(text, 14.0, theme::TEXT)),
@@ -601,7 +601,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         app.changed();
     }
     section(ui, crate::icon::EYE, "What your text model is told");
-    theme::ink(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+    theme::soft(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.label(t(engines::polish_prompt(&app.s, false), 12.5, theme::MUTED));
     });

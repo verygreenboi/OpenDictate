@@ -105,7 +105,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
         let card_h = 176.0;
         let (slot, _) = ui.allocate_exact_size(vec2(ui.available_width(), card_h), Sense::hover());
         let mut card = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(Layout::top_down(Align::Min)));
-        theme::ink(theme::SURFACE, 12, 2.5, 3).inner_margin(Margin::same(12)).show(&mut card, |ui| {
+        theme::soft(theme::SURFACE, 12, 2.5, 3).inner_margin(Margin::same(12)).show(&mut card, |ui| {
             ui.set_width(ui.available_width());
             ui.set_height(card_h - 24.0);
             {
@@ -424,7 +424,7 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 }
 
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
-    theme::ink(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
+    theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
         for a in Action::ALL {
             ui.label(t(a.label(), 12.5, Color32::from_rgb(0xD8, 0xD8, 0xD8)));
@@ -476,7 +476,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
         ("Speech model", speech_ok, speech, speech_where, Color32::from_rgb(0x3A, 0x47, 0x5C)),
         ("Text model", text_ok, text, if text_ok { text_where } else { "Optional · pastes as heard" }, Color32::from_rgb(0x4A, 0x45, 0x5E)),
     ] {
-        let resp = theme::ink(tint, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
+        let resp = theme::soft(tint, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(186.0 - 24.0);
             ui.label(b(title, 16.0, theme::TEXT));
             ui.add_space(2.0);
@@ -506,7 +506,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 pub fn kbd(ui: &mut egui::Ui, k: &str) {
-    theme::ink(theme::SURFACE, 14, 2.5, 3)
+    theme::soft(theme::SURFACE, 14, 2.5, 3)
         .corner_radius(5)
         .inner_margin(Margin::symmetric(6, 2))
         .show(ui, |ui| ui.label(b(pretty_key(k), 13.0, theme::TEXT)));
@@ -549,7 +549,7 @@ fn duration_text(minutes: f64) -> String {
 // History
 
 pub fn pill_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, items: &[(T, &str)]) {
-    theme::ink(theme::SURFACE, 18, 2.5, 3).inner_margin(Margin::same(4)).show(ui, |ui| {
+    theme::soft(theme::SURFACE, 18, 2.5, 3).inner_margin(Margin::same(4)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for (v, label) in items {
@@ -592,7 +592,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(10.0);
-    theme::ink(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::symmetric(12, 12)).show(ui, |ui| {
+    theme::soft(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::symmetric(12, 12)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
@@ -648,7 +648,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         let day = stats::local_date(items[i].when);
         ui.label(t(stats::day_heading(day), 13.0, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
         ui.add_space(2.0);
-        theme::ink(theme::SURFACE, 12, 2.0, 2).show(ui, |ui| {
+        theme::soft(theme::SURFACE, 12, 2.0, 2).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let mut first = true;
             while i < items.len() && stats::local_date(items[i].when) == day {
@@ -803,7 +803,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     if let Some(w) = &mut app.new_word {
         let mut add = false;
         let mut cancel = false;
-        theme::ink(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::same(12)).show(ui, |ui| {
+        theme::soft(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(t("Add a name, term or spelling you want written exactly like this.", 13.5, theme::MUTED));
             ui.horizontal(|ui| {
