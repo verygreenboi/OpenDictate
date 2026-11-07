@@ -730,10 +730,6 @@ impl DictateApp {
 impl eframe::App for DictateApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.window_lifecycle(ctx);
-        // Drawn from here, not from ui(): eframe does not call ui() while the
-        // main window is hidden, so a dictation started from the menu bar or a
-        // shortcut would record with nothing on screen to show for it.
-        self.indicator(ctx);
         while let Ok(e) = self.hk_rx.try_recv() {
             if self.capturing_key.is_none() {
                 self.on_hotkey(ctx, e);
@@ -783,6 +779,12 @@ impl eframe::App for DictateApp {
         let ctx = ui.ctx().clone();
         self.screenshot_step(&ctx);
         crate::views::draw(self, ui);
+        // Must stay in ui(). Calling show_viewport_immediate from logic() while
+        // the main window is hidden panics inside egui ("the user callback was
+        // never called"), because nothing renders then: ui() does not run and
+        // deferred viewport callbacks do not either. So while the window is
+        // closed a dictation runs with no indicator on screen.
+        self.indicator(&ctx);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
