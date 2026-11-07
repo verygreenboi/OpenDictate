@@ -227,7 +227,9 @@ impl DictateApp {
             for e in clicks {
                 if e.id == show {
                     self.hidden = false;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1360.0, 920.0)));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(140.0, 100.0)));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 } else if e.id == quit {
                     self.quitting = true;
@@ -237,7 +239,13 @@ impl DictateApp {
         }
         if self.shot.is_none() && !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            // Parked off-screen rather than hidden. egui renders nothing at all
+            // once the root window is hidden - not ui(), not child viewports -
+            // so the recording indicator would never appear. A 1x1 window far
+            // off-screen keeps frames coming while being invisible in practice.
+            ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
             self.hidden = true;
         }
         if self.hidden {
