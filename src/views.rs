@@ -4,7 +4,7 @@
 use crate::app::{DictateApp, Page, SettingsTab};
 use crate::settings::{Action, DictWord, KeepHistory, SpeechEngine, TextEngine};
 use crate::stats;
-use crate::theme::{self, b, m, para, t};
+use crate::theme::{self, b, d, m, para, t};
 use chrono::{Datelike, Duration, Local};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Layout, Margin, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 
@@ -57,7 +57,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.add_space(10.0);
         logo(ui);
-        ui.label(b("Open Dictate", 18.0, theme::TEXT));
+        ui.label(d("Open Dictate", 18.0, theme::TEXT));
         egui::Frame::new()
             .fill(Color32::from_rgb(0x46, 0x46, 0x46))
             .corner_radius(4)
@@ -105,7 +105,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
         let card_h = 176.0;
         let (slot, _) = ui.allocate_exact_size(vec2(ui.available_width(), card_h), Sense::hover());
         let mut card = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(Layout::top_down(Align::Min)));
-        egui::Frame::new().fill(Color32::from_rgb(0x34, 0x34, 0x34)).corner_radius(12).inner_margin(Margin::same(12)).show(&mut card, |ui| {
+        theme::ink(theme::SURFACE, 12, 2.5, 3).inner_margin(Margin::same(12)).show(&mut card, |ui| {
             ui.set_width(ui.available_width());
             ui.set_height(card_h - 24.0);
             {
@@ -161,16 +161,16 @@ fn logo(ui: &mut egui::Ui) {
 pub fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
     if active || resp.hovered() {
-        ui.painter().rect_filled(r, 8.0, if active { theme::NAV_ACTIVE } else { Color32::from_rgb(0x33, 0x33, 0x33) });
+        ui.painter().rect_filled(r, 8.0, if active { theme::NAV_ACTIVE } else { theme::LINE });
     }
     let p = ui.painter();
-    draw_icon(p, icon, pos2(r.left() + 20.0, r.center().y), if active { theme::TEXT } else { Color32::from_rgb(0xC0, 0xC0, 0xC0) });
+    draw_icon(p, icon, pos2(r.left() + 20.0, r.center().y), if active { theme::PAPER } else { theme::MUTED });
     p.text(
         pos2(r.left() + 36.0, r.center().y),
         Align2::LEFT_CENTER,
         label,
         FontId::new(14.5, theme::medium()),
-        if active { theme::TEXT } else { Color32::from_rgb(0xDA, 0xDA, 0xDA) },
+        if active { theme::PAPER } else { theme::TEXT },
     );
     ui.add_space(2.0);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -206,7 +206,7 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.set_width(main_w);
-            ui.label(b("Say it, skip the typing", 46.0, theme::TEXT));
+            ui.label(d("Say it, skip the typing", 46.0, theme::TEXT));
             ui.add_space(26.0);
             insights(app, ui, main_w);
         });
@@ -289,14 +289,14 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 }
 
 fn stat_card(ui: &mut egui::Ui, w: f32, parts: &[(String, &str)], label: &str) {
-    egui::Frame::new().fill(theme::CARD).corner_radius(16).inner_margin(Margin { left: 16, right: 16, top: 16, bottom: 14 }).show(ui, |ui| {
+    theme::ink_card().inner_margin(Margin { left: 16, right: 16, top: 16, bottom: 14 }).show(ui, |ui| {
         ui.set_width(w - 32.0);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for (v, unit) in parts {
-                    ui.label(b(v.clone(), 25.0, theme::TEXT));
+                    ui.label(d(v.clone(), 25.0, theme::TEXT));
                     ui.label(b(*unit, 12.5, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
                     ui.add_space(2.0);
                 }
@@ -308,7 +308,7 @@ fn stat_card(ui: &mut egui::Ui, w: f32, parts: &[(String, &str)], label: &str) {
 
 fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     let s = &app.stats;
-    egui::Frame::new().fill(theme::CARD).corner_radius(16).inner_margin(Margin::same(16)).show(ui, |ui| {
+    theme::ink_card().inner_margin(Margin::same(16)).show(ui, |ui| {
         ui.set_width(w - 32.0);
         let col = (w - 32.0) / 3.0;
         ui.horizontal(|ui| {
@@ -318,7 +318,7 @@ fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     ui.set_width(col);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(b(n.to_string(), 23.0, theme::TEXT));
+                        ui.label(d(n.to_string(), 23.0, theme::TEXT));
                         ui.label(b(if n == 1 { "day" } else { "days" }, 12.5, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
                     });
                     ui.label(t(label, 13.0, theme::MUTED));
@@ -387,7 +387,7 @@ fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 
 fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     let words = app.s.dictionary.len();
-    egui::Frame::new().fill(theme::CARD).corner_radius(16).inner_margin(Margin::same(16)).show(ui, |ui| {
+    theme::ink_card().inner_margin(Margin::same(16)).show(ui, |ui| {
         ui.set_width(w - 32.0);
         ui.set_min_height(210.0);
         let top = ui.min_rect();
@@ -396,7 +396,7 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
             let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
             ui.painter().rect_filled(r, 5.0, Color32::from_rgb(0x48, 0x48, 0x48));
             draw_icon(ui.painter(), "spark", r.center(), theme::MUTED);
-            ui.label(b(words.to_string(), 25.0, theme::TEXT));
+            ui.label(d(words.to_string(), 25.0, theme::TEXT));
             ui.label(b(if words == 1 { "word" } else { "words" }, 12.5, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
         });
         ui.label(t(format!("Personalization · {} tone", app.s.tone.label()), 14.0, theme::MUTED));
@@ -424,7 +424,7 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 }
 
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
-    egui::Frame::new().fill(theme::CARD_DIM).corner_radius(14).inner_margin(Margin::same(18)).show(ui, |ui| {
+    theme::ink(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
         for a in Action::ALL {
             ui.label(t(a.label(), 12.5, Color32::from_rgb(0xD8, 0xD8, 0xD8)));
@@ -551,7 +551,7 @@ fn duration_text(minutes: f64) -> String {
 // History
 
 pub fn pill_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, items: &[(T, &str)]) {
-    egui::Frame::new().fill(Color32::from_rgb(0x30, 0x30, 0x30)).corner_radius(18).inner_margin(Margin::same(4)).show(ui, |ui| {
+    theme::ink(theme::SURFACE, 18, 2.5, 3).inner_margin(Margin::same(4)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             for (v, label) in items {
@@ -594,7 +594,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         });
     });
     ui.add_space(10.0);
-    egui::Frame::new().fill(theme::PANEL).corner_radius(10).inner_margin(Margin::symmetric(12, 12)).show(ui, |ui| {
+    theme::ink(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::symmetric(12, 12)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
@@ -805,7 +805,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     if let Some(w) = &mut app.new_word {
         let mut add = false;
         let mut cancel = false;
-        egui::Frame::new().fill(theme::PANEL).corner_radius(10).inner_margin(Margin::same(12)).show(ui, |ui| {
+        theme::ink(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(t("Add a name, term or spelling you want written exactly like this.", 13.5, theme::MUTED));
             ui.horizontal(|ui| {

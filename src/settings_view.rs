@@ -4,7 +4,7 @@
 use crate::app::{DictateApp, SettingsTab};
 use crate::engines;
 use crate::settings::{Action, SpeechEngine, TextEngine, Tone};
-use crate::theme::{self, b, m, para, t};
+use crate::theme::{self, b, d, m, para, t};
 use crate::views::{VERSION, icon_button, kbd, nav_item};
 use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Margin, Sense, Stroke, vec2};
 
@@ -106,7 +106,7 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
 }
 
 fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(b("Models", 24.0, theme::TEXT));
+    ui.label(d("Models", 24.0, theme::TEXT));
     ui.label(para("You choose what turns your voice into text and what tidies it up. Nothing runs anywhere you didn't pick.", 13.5, theme::MUTED));
     ui.add_space(10.0);
     egui::Frame::new()
@@ -164,7 +164,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             for choice in engines::WHISPER_MODELS {
                 let have = local.iter().any(|p| p.file_name().is_some_and(|f| f == choice.file));
-                egui::Frame::new().fill(Color32::from_rgb(0x2E, 0x2E, 0x2E)).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                theme::ink(theme::SURFACE, 12, 2.0, 2).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
@@ -344,7 +344,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         app.run_test(&ctx);
     }
     if let Some(r) = app.test_output.lock().unwrap().clone() {
-        egui::Frame::new().fill(Color32::from_rgb(0x2A, 0x2A, 0x2A)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+        theme::ink(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match r {
                 Ok(text) => ui.label(t(text, 14.0, theme::TEXT)),
@@ -360,7 +360,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(b("Settings", 24.0, theme::TEXT));
+    ui.label(d("Settings", 24.0, theme::TEXT));
     section(ui, crate::icon::KEYBOARD, "Shortcuts");
     ui.horizontal(|ui| {
         let mut hold = app.s.hold_to_talk;
@@ -464,7 +464,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(b("Audio input", 24.0, theme::TEXT));
+    ui.label(d("Audio input", 24.0, theme::TEXT));
     section(ui, crate::icon::MIC_VOCAL, "Microphone");
     let mut changed = false;
     row(ui, "Microphone", "Which microphone records your voice.", 260.0, |ui| {
@@ -559,7 +559,7 @@ pub fn open_mic_privacy() {
 }
 
 fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(b("Personalization", 24.0, theme::TEXT));
+    ui.label(d("Personalization", 24.0, theme::TEXT));
     section(ui, crate::icon::PALETTE, "Tone");
     let w = (ui.available_width() - 24.0) / 4.0;
     ui.horizontal(|ui| {
@@ -604,7 +604,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         app.changed();
     }
     section(ui, crate::icon::EYE, "What your text model is told");
-    egui::Frame::new().fill(Color32::from_rgb(0x2A, 0x2A, 0x2A)).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+    theme::ink(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.label(t(engines::polish_prompt(&app.s, false), 12.5, theme::MUTED));
     });

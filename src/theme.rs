@@ -2,32 +2,73 @@
 
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText};
 
-pub const BG: Color32 = Color32::from_rgb(0x23, 0x23, 0x23);
-pub const SIDEBAR: Color32 = Color32::from_rgb(0x2C, 0x2C, 0x2C);
-pub const NAV_ACTIVE: Color32 = Color32::from_rgb(0x3B, 0x3B, 0x3B);
-pub const CARD: Color32 = Color32::from_rgb(0x38, 0x38, 0x38);
-pub const CARD_DIM: Color32 = Color32::from_rgb(0x2B, 0x2B, 0x2B);
-pub const PANEL: Color32 = Color32::from_rgb(0x29, 0x29, 0x29);
-pub const LINE: Color32 = Color32::from_rgb(0x3A, 0x3A, 0x3A);
-pub const TEXT: Color32 = Color32::from_rgb(0xF2, 0xF2, 0xF2);
-pub const MUTED: Color32 = Color32::from_rgb(0xA6, 0xA6, 0xA6);
-pub const FAINT: Color32 = Color32::from_rgb(0x78, 0x78, 0x78);
-pub const ACCENT: Color32 = Color32::from_rgb(0x4F, 0x7C, 0xF5);
-pub const GREEN: Color32 = Color32::from_rgb(0x2F, 0xA8, 0x6B);
-pub const RED: Color32 = Color32::from_rgb(0xE5, 0x4B, 0x5A);
-pub const AMBER: Color32 = Color32::from_rgb(0xE8, 0xA8, 0x38);
-pub const HEAT: [Color32; 4] = [
-    Color32::from_rgb(0x2A, 0x3A, 0x6E),
-    Color32::from_rgb(0x34, 0x4D, 0xA6),
-    Color32::from_rgb(0x44, 0x63, 0xD6),
-    Color32::from_rgb(0x6D, 0x8F, 0xFA),
-];
+// Paper & Ink, dark variant. Token names follow the kit's CSS so the two can
+// be compared line by line; the older names are kept so call sites still read
+// the same.
+pub const PAPER: Color32 = Color32::from_rgb(0x14, 0x14, 0x0F);
+pub const INK: Color32 = Color32::from_rgb(0xF4, 0xF3, 0xEF);
+pub const SURFACE: Color32 = Color32::from_rgb(0x1F, 0x1E, 0x18);
 
+pub const BG: Color32 = PAPER;
+pub const SIDEBAR: Color32 = SURFACE;
+pub const NAV_ACTIVE: Color32 = INK;
+pub const CARD: Color32 = SURFACE;
+pub const CARD_DIM: Color32 = PAPER;
+pub const PANEL: Color32 = SURFACE;
+/// --hairline
+pub const LINE: Color32 = Color32::from_rgba_premultiplied(0x22, 0x22, 0x1E, 0xFF);
+pub const TEXT: Color32 = INK;
+/// Ink stepped back, for secondary copy.
+pub const MUTED: Color32 = Color32::from_rgb(0xA8, 0xA7, 0xA2);
+pub const FAINT: Color32 = Color32::from_rgb(0x79, 0x78, 0x73);
+/// --follow. The kit's blue reads as settled and working.
+pub const ACCENT: Color32 = Color32::from_rgb(0x8F, 0xB6, 0xEF);
+/// --convert, used where the old theme said green: a thing that is fine.
+pub const GREEN: Color32 = Color32::from_rgb(0x9A, 0xBE, 0xEF);
+/// --red
+pub const RED: Color32 = Color32::from_rgb(0xE0, 0x49, 0x3D);
+/// --y2. Yellow has noticed; something wants attention soon.
+pub const AMBER: Color32 = Color32::from_rgb(0xF2, 0xC3, 0x1A);
+/// --y1 and --y3, for the softer and heavier ends of yellow.
+pub const Y1: Color32 = Color32::from_rgb(0xF8, 0xE0, 0x8A);
+pub const Y3: Color32 = Color32::from_rgb(0xC9, 0x8F, 0x06);
+/// Hard offset shadow, the kit's signature. Drawn, not blurred.
+pub const SHADOW: Color32 = INK;
+pub const HEAT: [Color32; 4] = [
+    Color32::from_rgb(0x2B, 0x3A, 0x55),
+    Color32::from_rgb(0x44, 0x63, 0x96),
+    Color32::from_rgb(0x6D, 0x90, 0xCF),
+    Color32::from_rgb(0x9A, 0xBE, 0xEF),
+];
 pub fn bold() -> FontFamily {
     FontFamily::Name("bold".into())
 }
 pub fn medium() -> FontFamily {
     FontFamily::Name("medium".into())
+}
+/// Marsipan, the kit's rounded display face. Headings and figures only.
+pub fn display() -> FontFamily {
+    FontFamily::Name("display".into())
+}
+
+/// A surface in the kit's hand: thick ink outline and a hard offset shadow.
+///
+/// The shadow is drawn, never blurred - blur 0 is what makes it read as ink on
+/// paper rather than a drop shadow. `lift` is how far it sits behind.
+pub fn ink(fill: Color32, radius: u8, border: f32, lift: i8) -> egui::Frame {
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(border, INK))
+        .corner_radius(egui::CornerRadius::same(radius))
+        .shadow(egui::epaint::Shadow { offset: [lift, lift + 1], blur: 0, spread: 0, color: INK })
+}
+/// --r-square sized card: 2.5px outline, 3/4 shadow.
+pub fn ink_card() -> egui::Frame {
+    ink(SURFACE, 16, 2.5, 3)
+}
+/// --r-panel sized panel: 3px outline, 5/6 shadow.
+pub fn ink_panel() -> egui::Frame {
+    ink(SURFACE, 22, 3.0, 5)
 }
 
 pub fn t(s: impl Into<String>, size: f32, color: Color32) -> RichText {
@@ -40,6 +81,12 @@ pub fn m(s: impl Into<String>, size: f32, color: Color32) -> RichText {
     RichText::new(s).font(FontId::new(size, medium())).color(color)
 }
 
+/// Display type: Marsipan, for titles and figures. The kit uses it at 40 for a
+/// big title, 27 for a figure and 15 on buttons; body copy stays Nunito.
+pub fn d(s: impl Into<String>, size: f32, color: Color32) -> RichText {
+    RichText::new(s).font(FontId::new(size, display())).color(color)
+}
+
 /// Body copy that runs to more than one line.
 ///
 /// egui spaces rows by the font's own metrics, which is about 1.2x the size:
@@ -49,37 +96,41 @@ pub fn para(s: impl Into<String>, size: f32, color: Color32) -> RichText {
     t(s, size, color).line_height(Some(size * 1.5))
 }
 
-/// Uses the system's San Francisco font at three weights when it's there,
-/// falling back to egui's built-in font elsewhere.
+/// Paper & Ink's faces: Marsipan for display, Nunito for everything else.
+///
+/// Nunito is a variable font, so the kit's three body weights come from one
+/// file at different points on its wght axis. Lucide sits behind all of them
+/// so icon codepoints keep rendering inside ordinary strings.
 pub fn install(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     let fallback = fonts.families[&FontFamily::Proportional].clone();
-    let sf = std::fs::read("/System/Library/Fonts/SFNS.ttf").ok();
-    // Lucide sits behind every family, so an icon codepoint inside an ordinary
-    // string just renders. Its glyphs live in a private use area, which no text
-    // font claims, so nothing else is affected.
     fonts.font_data.insert(
         "lucide".to_owned(),
         std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/lucide.ttf"))),
     );
+    fonts.font_data.insert(
+        "marsipan".to_owned(),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/Marsipan-Regular.ttf"))),
+    );
+    let nunito = include_bytes!("../assets/Nunito-Variable.ttf");
     let mut add = |name: &str, family: FontFamily, weight: f32| {
-        let mut list = Vec::new();
-        if let Some(bytes) = &sf {
-            let mut tweak = egui::FontTweak::default();
-            tweak.coords = egui::epaint::text::VariationCoords::new([("wght", weight)]);
-            fonts.font_data.insert(
-                name.to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(bytes.clone()).tweak(tweak)),
-            );
-            list.push(name.to_owned());
-        }
-        list.push("lucide".to_owned());
+        let mut tweak = egui::FontTweak::default();
+        tweak.coords = egui::epaint::text::VariationCoords::new([("wght", weight)]);
+        fonts.font_data.insert(
+            name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_static(nunito).tweak(tweak)),
+        );
+        let mut list = vec![name.to_owned(), "lucide".to_owned()];
         list.extend(fallback.iter().cloned());
         fonts.families.insert(family, list);
     };
-    add("sf-regular", FontFamily::Proportional, 420.0);
-    add("sf-medium", medium(), 560.0);
-    add("sf-bold", bold(), 700.0);
+    // The kit's body weights: 600 copy, 700 emphasis, 800 buttons and labels.
+    add("nunito-600", FontFamily::Proportional, 600.0);
+    add("nunito-700", medium(), 700.0);
+    add("nunito-800", bold(), 800.0);
+    let mut disp = vec!["marsipan".to_owned(), "nunito-800".to_owned(), "lucide".to_owned()];
+    disp.extend(fallback.iter().cloned());
+    fonts.families.insert(display(), disp);
     ctx.set_fonts(fonts);
 
     let mut style = egui::Style::default();
@@ -91,16 +142,25 @@ pub fn install(ctx: &egui::Context) {
     v.override_text_color = Some(TEXT);
     v.selection.bg_fill = ACCENT;
     v.hyperlink_color = ACCENT;
-    v.widgets.inactive.weak_bg_fill = Color32::from_rgb(0x44, 0x44, 0x44);
-    v.widgets.inactive.bg_fill = Color32::from_rgb(0x44, 0x44, 0x44);
-    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x50, 0x50, 0x50);
-    v.widgets.active.weak_bg_fill = Color32::from_rgb(0x5A, 0x5A, 0x5A);
+    // Controls carry the outline too. The kit presses a button by moving it
+    // onto its own shadow, so pressed state is the ink fill with paper on top.
+    v.widgets.inactive.weak_bg_fill = SURFACE;
+    v.widgets.inactive.bg_fill = SURFACE;
+    v.widgets.inactive.bg_stroke = egui::Stroke::new(2.5, INK);
+    v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, INK);
+    v.widgets.hovered.weak_bg_fill = Color32::from_rgb(0x2B, 0x2A, 0x23);
+    v.widgets.hovered.bg_fill = Color32::from_rgb(0x2B, 0x2A, 0x23);
+    v.widgets.hovered.bg_stroke = egui::Stroke::new(2.5, INK);
+    v.widgets.active.weak_bg_fill = INK;
+    v.widgets.active.bg_fill = INK;
+    v.widgets.active.bg_stroke = egui::Stroke::new(2.5, INK);
+    v.widgets.active.fg_stroke = egui::Stroke::new(1.0, PAPER);
     for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.noninteractive] {
-        w.corner_radius = egui::CornerRadius::same(8);
+        w.corner_radius = egui::CornerRadius::same(11);
     }
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, LINE);
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-    style.spacing.button_padding = egui::vec2(12.0, 6.0);
+    style.spacing.button_padding = egui::vec2(13.0, 7.0);
     style.spacing.interact_size.y = 30.0;
     for (ts, size) in [
         (egui::TextStyle::Body, 14.0),
