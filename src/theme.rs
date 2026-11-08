@@ -132,11 +132,6 @@ pub fn PANEL_SHEER() -> Color32 {
     if BACKDROP.load(Ordering::Relaxed) { Color32::TRANSPARENT } else { SURFACE() }
 }
 
-/// Whether containers are letting the backdrop through.
-pub fn is_sheer() -> bool {
-    BACKDROP.load(Ordering::Relaxed)
-}
-
 /// Said once the blurred backdrop is carrying the wash.
 pub fn set_backdrop(on: bool) {
     BACKDROP.store(on, Ordering::Relaxed);

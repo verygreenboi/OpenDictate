@@ -164,25 +164,13 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     // The kit's .sidepanel: a 3px ink outline over a hard ink shadow. Inset so
     // the shadow has somewhere to fall inside the pane.
     let rect = ui.max_rect().shrink2(vec2(7.0, 10.0));
+    // Solid, like the cards. A see-through panel put the backdrop between
+    // the outline and the exposed sliver of the shadow, so the two read as a
+    // doubled border; filled, they meet and the shadow is one rounded mass
+    // again. Only the strip the panel sits in lets the backdrop through.
     let p = ui.painter();
-    let shadow = rect.translate(vec2(5.0, 6.0));
-    if theme::is_sheer() {
-        // On an opaque panel the fill hides all of the shadow but the sliver
-        // past its right and bottom edges. A see-through panel hides none of
-        // it, so only that sliver is drawn - the same shape, clipped rather
-        // than covered. Outlining it instead read as a doubled border.
-        drop(p);
-        for clip in [
-            Rect::from_min_max(pos2(rect.right(), shadow.top()), shadow.max),
-            Rect::from_min_max(pos2(shadow.left(), rect.bottom()), shadow.max),
-        ] {
-            ui.painter().with_clip_rect(clip).rect_filled(shadow, 18.0, theme::INK());
-        }
-    } else {
-        p.rect_filled(shadow, 18.0, theme::INK());
-    }
-    let p = ui.painter();
-    p.rect_filled(rect, 18.0, theme::PANEL_SHEER());
+    p.rect_filled(rect.translate(vec2(5.0, 6.0)), 18.0, theme::INK());
+    p.rect_filled(rect, 18.0, theme::SURFACE());
     p.rect_stroke(rect, 18.0, Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
 
     let inner = rect.shrink2(vec2(10.0, 12.0));
