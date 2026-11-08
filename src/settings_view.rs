@@ -17,8 +17,13 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
             theme::ink_panel(),
         );
     let resp = modal.show(ctx, |ui| {
-        ui.set_min_size(size);
-        ui.set_max_size(size);
+        // Bind the sheet to an exact rect and build inside it. set_max_size
+        // alone does not hold: a child that asks for more - an infinitely wide
+        // text field, say - widens the whole modal, which is why one tab used
+        // to be noticeably broader than the rest.
+        let (area, _) = ui.allocate_exact_size(size, Sense::hover());
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(area).layout(Layout::top_down(Align::Min)));
+        let ui = &mut ui;
         let tab = app.settings_tab.unwrap_or(SettingsTab::General);
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
@@ -334,7 +339,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 
     section(ui, crate::icon::FLASK, "Try it");
     ui.label(para("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
-    ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(f32::INFINITY).desired_rows(2));
+    ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(ui.available_width()).desired_rows(2));
     let running = app.test_running.load(std::sync::atomic::Ordering::SeqCst);
     let btn = egui::Button::new(b(if running { "Running…" } else { "Run test" }, 14.0, theme::ON_FILL)).fill(theme::ACCENT);
     if ui.add_enabled(!running, btn).clicked() {
@@ -558,7 +563,14 @@ pub fn open_mic_privacy() {
 fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(d("Personalization", 24.0, theme::TEXT));
     section(ui, crate::icon::PALETTE, "Tone");
-    let w = (ui.available_width() - 24.0) / 4.0;
+    // Four cards across. Each one costs its inner margin and its border on
+    // both sides, and there are three gaps between them; leave that out and
+    // the row demands more width than the pane has, which drags the whole
+    // modal wider than every other tab.
+    let n = Tone::ALL.len() as f32;
+    let card_chrome = 10.0 * 2.0 + 2.0 * 2.0;
+    let gaps = ui.spacing().item_spacing.x * (n - 1.0);
+    let w = ((ui.available_width() - gaps) / n - card_chrome).max(56.0);
     ui.horizontal(|ui| {
         for tone in Tone::ALL {
             let active = app.s.tone == tone;
@@ -568,10 +580,16 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 .corner_radius(10)
                 .inner_margin(Margin::same(10))
                 .show(ui, |ui| {
-                    ui.set_width(w - 22.0);
-                    ui.set_min_height(56.0);
-                    ui.label(m(tone.label(), 14.0, if active { theme::ON_FILL } else { theme::TEXT }));
-                    ui.label(t(tone.blurb(), 12.0, if active { theme::ON_FILL_DIM } else { theme::MUTED }));
+                    // Frame::show inherits the parent layout, and the parent
+                    // here is horizontal: without this the label and blurb sit
+                    // side by side and each card demands its full text width,
+                    // which ran the row off the edge of the sheet.
+                    ui.vertical(|ui| {
+                        ui.set_width(w);
+                        ui.set_min_height(56.0);
+                        ui.label(m(tone.label(), 14.0, if active { theme::ON_FILL } else { theme::TEXT }));
+                        ui.label(para(tone.blurb(), 12.0, if active { theme::ON_FILL_DIM } else { theme::MUTED }));
+                    });
                 });
             if ui.interact(resp.response.rect, ui.id().with(tone.label()), Sense::click()).clicked() {
                 app.s.tone = tone;
@@ -592,7 +610,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     });
     section(ui, crate::icon::PENCIL_LINE, "Your own instructions");
     ui.label(t("Anything else your text model should always do, e.g. \"Use British spelling.\"", 13.5, theme::MUTED));
-    c |= ui.add(egui::TextEdit::multiline(&mut app.s.custom_instructions).desired_width(f32::INFINITY).desired_rows(3)).changed();
+    c |= ui.add(egui::TextEdit::multiline(&mut app.s.custom_instructions).desired_width(ui.available_width()).desired_rows(3)).changed();
     section(ui, crate::icon::TIMER, "Time saved");
     row(ui, "Your typing speed", "Used to work out the time saved on Home.", 220.0, |ui| {
         c |= ui.add(egui::Slider::new(&mut app.s.typing_wpm, 15.0..=120.0).suffix(" WPM")).changed();

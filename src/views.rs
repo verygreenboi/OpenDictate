@@ -85,21 +85,6 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
         }
     }
 
-    sp_cap(ui, "SETTINGS");
-    for (icon, label, tab) in [
-        ("mic", "Audio input", SettingsTab::Audio),
-        ("spark", "Personalization", SettingsTab::Personalization),
-        ("gear", "Settings", SettingsTab::General),
-        ("help", "About", SettingsTab::About),
-    ] {
-        if sp_item(ui, icon, label, app.settings_tab == Some(tab), None).clicked() {
-            if tab == SettingsTab::Audio {
-                app.refresh_mics();
-            }
-            app.settings_tab = Some(tab);
-        }
-    }
-
     // .sp-foot, laid out upwards from the bottom of the panel.
     let (speech_ok, _) = app.speech_ready();
     let (text_ok, _) = app.text_ready();
@@ -113,6 +98,12 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
             app.refresh_health(ui.ctx());
         }
         ui.add_space(8.0);
+        // The kit lists Settings in the foot, under the meter, rather than as
+        // a group of its own. The modal has its own side panel for the rest.
+        if sp_item(ui, "gear", "Settings", app.settings_tab.is_some(), None).clicked() {
+            app.settings_tab = Some(SettingsTab::General);
+        }
+        ui.add_space(4.0);
 
         // .sp-meter: speech is what dictation needs, text only sweetens it.
         let filled = if speech_ok { 0.5 } else { 0.0 } + if text_ok { 0.5 } else { 0.0 };
