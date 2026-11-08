@@ -283,6 +283,18 @@ pub fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
             ));
             p.add(line((10.0, 20.5), (14.0, 20.5)));
         }
+        // i-star
+        "star" => {
+            p.add(poly(&[
+                (12.0, 3.8), (14.5, 9.1), (20.2, 9.8), (16.0, 13.7), (17.1, 19.4),
+                (12.0, 16.6), (6.9, 19.4), (8.0, 13.7), (3.8, 9.8), (9.5, 9.1), (12.0, 3.8),
+            ]));
+        }
+        // not in the sprite: the kit has no tick, and a star means favourite,
+        // not confirmed. Drawn to the same recipe as clock and book.
+        "check" => {
+            p.add(poly(&[(5.0, 12.4), (10.0, 17.4), (19.2, 6.9)]));
+        }
         // i-lens
         "lens" => {
             p.add(egui::Shape::circle_stroke(at(10.0, 10.0), 6.2 * k, Stroke::new(2.4 * k, color)));
@@ -391,7 +403,7 @@ pub enum State {
 
 pub fn status(ui: &mut egui::Ui, state: State, text: impl Into<String>) {
     let (tint, glyph) = match state {
-        State::Ok => (theme::GREEN, "star"),
+        State::Ok => (theme::GREEN, "check"),
         State::Warn => (theme::AMBER, "bell"),
         State::Bad => (theme::RED, "x"),
     };
