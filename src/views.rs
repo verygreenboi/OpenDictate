@@ -631,14 +631,24 @@ pub enum Btn {
 /// Rotation is the one part left out - the kit tilts these by about a degree
 /// and egui cannot rotate a laid out widget.
 pub fn kit_button(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32) -> egui::Response {
+    kit_button_on(ui, label, kind, min_w, true)
+}
+
+/// The same button with the kit's .is-disabled: 0.38 opacity, no shadow,
+/// nothing to press. Only the fill and the edge fade - the label is already
+/// paper, which is what fading the whole thing onto paper would leave.
+pub fn kit_button_on(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32, on: bool) -> egui::Response {
     let font = FontId::new(15.0, theme::display());
     let text = label.to_uppercase();
     let pad = if kind == Btn::Primary { 32.0 } else { 22.0 };
     let measured = ui.painter().layout_no_wrap(text.clone(), font.clone(), theme::INK).rect.width();
     let w = (measured + pad * 2.0).max(min_w);
-    let (slot, resp) = ui.allocate_exact_size(vec2(w + 5.0, 50.0), Sense::click());
+    let sense = if on { Sense::click() } else { Sense::hover() };
+    let (slot, resp) = ui.allocate_exact_size(vec2(w + 5.0, 50.0), sense);
     let base = Rect::from_min_size(slot.min, vec2(w, 44.0));
-    let (shift, lift) = if resp.is_pointer_button_down_on() {
+    let (shift, lift) = if !on {
+        (vec2(0.0, 0.0), 0.0)
+    } else if resp.is_pointer_button_down_on() {
         (vec2(5.0, 6.0), 0.0)
     } else if resp.hovered() {
         (vec2(3.0, 3.0), 2.0)
@@ -647,12 +657,13 @@ pub fn kit_button(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32) -> egui
     };
     let r = base.translate(shift);
     // Primary is ink already; secondary turns into it on hover.
-    let inked = kind == Btn::Primary || resp.hovered();
+    let inked = kind == Btn::Primary || (on && resp.hovered());
     let (fill, fg, edge) = if inked {
         (theme::INK, theme::PAPER, theme::PAPER)
     } else {
         (theme::SURFACE, theme::INK, theme::INK)
     };
+    let (fill, edge) = if on { (fill, edge) } else { (fill.gamma_multiply(0.38), edge.gamma_multiply(0.38)) };
     let p = ui.painter();
     if lift > 0.0 {
         p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 16.0, theme::INK);
@@ -667,7 +678,7 @@ pub fn kit_button(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32) -> egui
     );
     let g = p.layout_job(job);
     p.galley(pos2(r.center().x - g.rect.width() / 2.0, r.center().y - g.rect.height() / 2.0), g, fg);
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    if on { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp }
 }
 
 /// The kit's .inspect: a square icon button that presses onto its shadow and
@@ -708,14 +719,26 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
             ui.set_width(main_w);
             setup_notice(app, ui, main_w);
             ui.label(d("Say it, skip the typing", 46.0, theme::TEXT));
-            ui.add_space(26.0);
+            ui.add_space(20.0);
+            ui.horizontal(|ui| {
+                start_button(app, ui, 196.0);
+                // The shortcut was only discoverable inside a rail card most
+                // people stop seeing. Next to the button it is learned once.
+                if let Some(k) = app.s.keys(Action::Dictate).first() {
+                    ui.add_space(14.0);
+                    ui.label(t("or press", 13.5, theme::MUTED));
+                    ui.add_space(2.0);
+                    kbd(ui, k);
+                }
+            });
+            ui.add_space(30.0);
             insights(app, ui, main_w);
         });
         ui.add_space(gap);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.set_width(right_w);
-            ui.add_space(98.0);
+            ui.add_space(181.0);
             right_column(app, ui);
         });
     });
@@ -919,10 +942,36 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     });
 }
 
+/// The one thing the app is for. It sat third in the right rail, under a card
+/// of keyboard shortcuts, on a page that opens on statistics; it belongs under
+/// the title that invites it.
+fn start_button(app: &mut DictateApp, ui: &mut egui::Ui, min_w: f32) {
+    let rec = app.recording.as_ref().map(|(_, a, _)| *a);
+    let busy = app.busy.is_some();
+    let label = match (rec, busy) {
+        (Some(_), _) => format!("{}  Stop & paste", crate::icon::SQUARE),
+        (None, true) => "Thinking…".to_string(),
+        _ => format!("{}  Start dictating", crate::icon::MIC),
+    };
+    // While the text is being cleaned up there is nothing to press, but the
+    // hero must not collapse around the gap, so the button disables in place.
+    if kit_button_on(ui, &label, Btn::Primary, min_w, !busy).clicked() {
+        if rec.is_some() {
+            let ctx = ui.ctx().clone();
+            app.stop_recording(&ctx);
+        } else {
+            app.start_recording(Action::Dictate);
+        }
+    }
+}
+
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
-        for (i, a) in Action::ALL.iter().enumerate() {
+        // Dictate is in the hero now, beside the button it belongs to; the
+        // card holds what the hero does not say.
+        let rest: Vec<Action> = Action::ALL.iter().copied().filter(|a| *a != Action::Dictate).collect();
+        for (i, a) in rest.iter().enumerate() {
             ui.label(t(a.label(), 12.5, Color32::from_rgb(0xD8, 0xD8, 0xD8)));
             ui.horizontal_wrapped(|ui| {
                 let keys = app.s.keys(*a);
@@ -933,30 +982,12 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
                     kbd(ui, k);
                 }
             });
-            if i + 1 < Action::ALL.len() {
+            if i + 1 < rest.len() {
                 ui.add_space(6.0);
             }
         }
     });
     ui.add_space(24.0);
-
-    // Start button, for clicking instead of using a shortcut.
-    let rec = app.recording.as_ref().map(|(_, a, _)| *a);
-    let (label, fill) = match (rec, &app.busy) {
-        (Some(_), _) => (format!("{}  Stop & paste", crate::icon::SQUARE), theme::RED),
-        (None, Some(_)) => ("Thinking…".to_string(), Color32::from_rgb(0x48, 0x48, 0x48)),
-        _ => (format!("{}  Start dictating", crate::icon::MIC), theme::ACCENT),
-    };
-    let _ = fill;
-    if app.busy.is_none() && kit_button(ui, &label, Btn::Primary, 196.0).clicked() {
-        if rec.is_some() {
-            let ctx = ui.ctx().clone();
-            app.stop_recording(&ctx);
-        } else {
-            app.start_recording(Action::Dictate);
-        }
-    }
-    ui.add_space(14.0);
 
     // One card for both models. Four facts each was three too many: once the
     // dots are green nothing here changes again, and the engine names
