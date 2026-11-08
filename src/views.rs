@@ -50,47 +50,53 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
 // ---------------------------------------------------------------------------
 // Sidebar
 
-/// The kit's NOTICE (.consent): paper, a 2px ink edge and a soft blurred
-/// shadow - the one place the kit blurs one - with its actions in the display
-/// face, equal width, inverting to ink when you point at them.
+/// The kit's NOTICE, warning and error variants.
 ///
-/// Setting up a model is the thing that stops dictation working, so it is
-/// stated here rather than tucked into the side panel.
+/// The variant recolours the whole box so the tone reads before the words do:
+/// yellow when something is merely missing, red when nothing can run. It takes
+/// the side panel's hard offset shadow rather than the soft one, because a
+/// notice is meant to stop you.
+///
+/// One deviation: the kit shadows these in --on-yellow and --on-red, both of
+/// which are paper. On a dark page paper is the page, so the shadow would be
+/// invisible; it uses ink here, as the side panel does.
 fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     let (speech_ok, speech) = app.speech_ready();
     let (text_ok, text) = app.text_ready();
     if speech_ok && text_ok {
         return;
     }
-    let (line, tone) = if speech_ok {
-        (format!("Dictation is ready. The text model is optional: {text}"), theme::AMBER)
+    let (fill, head, body) = if speech_ok {
+        (theme::Y1, "NEEDS A LOOK", format!("The text model is optional, and yours is missing: {text}"))
     } else {
-        (format!("Dictation needs a speech model. {speech}"), theme::RED)
+        (theme::RED, "NOT READY", format!("Dictation needs a speech model before it can run. {speech}"))
     };
+    let fg = theme::PAPER;
     egui::Frame::new()
-        // The kit fills .consent with --paper, but on a dark page paper is the
-        // page itself, so the notice would have nothing to sit against.
-        .fill(theme::SURFACE)
-        .stroke(Stroke::new(2.0, theme::INK))
-        .corner_radius(12)
-        .shadow(egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: theme::SOFT_SHADOW })
+        .fill(fill)
+        .stroke(Stroke::new(2.5, fg))
+        .corner_radius(16)
+        .shadow(egui::epaint::Shadow { offset: [5, 6], blur: 0, spread: 0, color: theme::INK })
         .inner_margin(Margin { left: 14, right: 14, top: 11, bottom: 12 })
         .show(ui, |ui| {
-            ui.set_width(w - 32.0);
+            ui.set_width(w - 33.0);
             ui.horizontal(|ui| {
-                kit_icon(ui.painter(), "gear", pos2(ui.cursor().left() + 9.0, ui.cursor().top() + 11.0), tone);
-                ui.add_space(26.0);
                 ui.vertical(|ui| {
-                    ui.set_width(w - 32.0 - 26.0 - 160.0);
-                    ui.label(m("SET UP", 10.0, tone));
-                    ui.label(para(line, 13.0, theme::TEXT));
+                    ui.set_width(w - 33.0 - 170.0);
+                    ui.spacing_mut().item_spacing.y = 5.0;
+                    ui.horizontal(|ui| {
+                        kit_icon(ui.painter(), if speech_ok { "bell" } else { "x" }, pos2(ui.cursor().left() + 8.0, ui.cursor().top() + 7.0), fg);
+                        ui.add_space(22.0);
+                        ui.label(b(head, 10.0, fg));
+                    });
+                    ui.label(para(body, 13.0, fg));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let btn = egui::Button::new(d("MANAGE MODELS", 11.0, theme::TEXT))
-                        .fill(theme::PAPER)
-                        .stroke(Stroke::new(2.0, theme::INK))
+                    let btn = egui::Button::new(d("MANAGE MODELS", 11.0, fg))
+                        .fill(fill)
+                        .stroke(Stroke::new(2.0, fg))
                         .corner_radius(8)
-                        .min_size(vec2(148.0, 30.0));
+                        .min_size(vec2(152.0, 30.0));
                     if ui.add(btn).clicked() {
                         app.settings_tab = Some(SettingsTab::Models);
                         app.refresh_health(ui.ctx());
@@ -210,6 +216,24 @@ fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
                 p.add(line((sx, sy), (ex, ey)));
             }
         }
+        // i-bell
+        "bell" => {
+            p.add(poly(&[(6.0, 16.5), (6.0, 11.0)]));
+            p.add(poly(&[(18.0, 11.0), (18.0, 16.5), (19.5, 18.0), (4.5, 18.0), (6.0, 16.5)]));
+            p.add(egui::Shape::line(
+                (0..=16).map(|i| {
+                    let a = std::f32::consts::PI * (1.0 + i as f32 / 16.0);
+                    at(12.0 + a.cos() * 6.0, 11.0 + a.sin() * 6.0)
+                }).collect::<Vec<_>>(),
+                st,
+            ));
+            p.add(line((10.0, 20.5), (14.0, 20.5)));
+        }
+        // i-x
+        "x" => {
+            p.add(line((7.0, 7.0), (17.0, 17.0)));
+            p.add(line((17.0, 7.0), (7.0, 17.0)));
+        }
         // not in the sprite, drawn to match it
         "clock" => {
             p.add(ring(7.8));
@@ -301,10 +325,9 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.set_width(main_w);
-            ui.label(d("Say it, skip the typing", 46.0, theme::TEXT));
-            ui.add_space(18.0);
             setup_notice(app, ui, main_w);
-            ui.add_space(8.0);
+            ui.label(d("Say it, skip the typing", 46.0, theme::TEXT));
+            ui.add_space(26.0);
             insights(app, ui, main_w);
         });
         ui.add_space(gap);
