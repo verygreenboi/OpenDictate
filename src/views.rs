@@ -16,7 +16,7 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
         .exact_size(216.0)
         .resizable(false)
         .show_separator_line(false)
-        .frame(egui::Frame::new().fill(theme::BG()).inner_margin(Margin { left: 10, right: 8, top: 10, bottom: 10 }))
+        .frame(egui::Frame::new().fill(theme::BG_SHEER()).inner_margin(Margin { left: 10, right: 8, top: 10, bottom: 10 }))
         .show(ui, |ui| sidebar(app, ui));
 
     egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG_SHEER())).show(ui, |ui| {
@@ -167,12 +167,21 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     let p = ui.painter();
     let shadow = rect.translate(vec2(5.0, 6.0));
     if theme::is_sheer() {
-        // A solid shadow behind a panel you can see through is just a cream
-        // slab filling it. The kit's hard offset becomes a second outline.
-        p.rect_stroke(shadow, 18.0, Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
+        // On an opaque panel the fill hides all of the shadow but the sliver
+        // past its right and bottom edges. A see-through panel hides none of
+        // it, so only that sliver is drawn - the same shape, clipped rather
+        // than covered. Outlining it instead read as a doubled border.
+        drop(p);
+        for clip in [
+            Rect::from_min_max(pos2(rect.right(), shadow.top()), shadow.max),
+            Rect::from_min_max(pos2(shadow.left(), rect.bottom()), shadow.max),
+        ] {
+            ui.painter().with_clip_rect(clip).rect_filled(shadow, 18.0, theme::INK());
+        }
     } else {
         p.rect_filled(shadow, 18.0, theme::INK());
     }
+    let p = ui.painter();
     p.rect_filled(rect, 18.0, theme::PANEL_SHEER());
     p.rect_stroke(rect, 18.0, Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
 
