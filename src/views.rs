@@ -50,6 +50,56 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
 // ---------------------------------------------------------------------------
 // Sidebar
 
+/// The kit's NOTICE (.consent): paper, a 2px ink edge and a soft blurred
+/// shadow - the one place the kit blurs one - with its actions in the display
+/// face, equal width, inverting to ink when you point at them.
+///
+/// Setting up a model is the thing that stops dictation working, so it is
+/// stated here rather than tucked into the side panel.
+fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
+    let (speech_ok, speech) = app.speech_ready();
+    let (text_ok, text) = app.text_ready();
+    if speech_ok && text_ok {
+        return;
+    }
+    let (line, tone) = if speech_ok {
+        (format!("Dictation is ready. The text model is optional: {text}"), theme::AMBER)
+    } else {
+        (format!("Dictation needs a speech model. {speech}"), theme::RED)
+    };
+    egui::Frame::new()
+        // The kit fills .consent with --paper, but on a dark page paper is the
+        // page itself, so the notice would have nothing to sit against.
+        .fill(theme::SURFACE)
+        .stroke(Stroke::new(2.0, theme::INK))
+        .corner_radius(12)
+        .shadow(egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: theme::SOFT_SHADOW })
+        .inner_margin(Margin { left: 14, right: 14, top: 11, bottom: 12 })
+        .show(ui, |ui| {
+            ui.set_width(w - 32.0);
+            ui.horizontal(|ui| {
+                kit_icon(ui.painter(), "gear", pos2(ui.cursor().left() + 9.0, ui.cursor().top() + 11.0), tone);
+                ui.add_space(26.0);
+                ui.vertical(|ui| {
+                    ui.set_width(w - 32.0 - 26.0 - 160.0);
+                    ui.label(m("SET UP", 10.0, tone));
+                    ui.label(para(line, 13.0, theme::TEXT));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let btn = egui::Button::new(d("MANAGE MODELS", 11.0, theme::TEXT))
+                        .fill(theme::PAPER)
+                        .stroke(Stroke::new(2.0, theme::INK))
+                        .corner_radius(8)
+                        .min_size(vec2(148.0, 30.0));
+                    if ui.add(btn).clicked() {
+                        app.settings_tab = Some(SettingsTab::Models);
+                        app.refresh_health(ui.ctx());
+                    }
+                });
+            });
+        });
+}
+
 fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     // The kit's .sidepanel: a 3px ink outline over a hard ink shadow. Inset so
     // the shadow has somewhere to fall inside the pane.
@@ -86,45 +136,11 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     }
 
     // .sp-foot, laid out upwards from the bottom of the panel.
-    let (speech_ok, _) = app.speech_ready();
-    let (text_ok, _) = app.text_ready();
     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-        let btn = egui::Button::new(b("Manage models", 14.0, theme::ON_FILL))
-            .fill(theme::ACCENT)
-            .corner_radius(14)
-            .min_size(vec2(ui.available_width(), 38.0));
-        if ui.add(btn).clicked() {
-            app.settings_tab = Some(SettingsTab::Models);
-            app.refresh_health(ui.ctx());
-        }
-        ui.add_space(8.0);
-        // The kit lists Settings in the foot, under the meter, rather than as
-        // a group of its own. The modal has its own side panel for the rest.
         if sp_item(ui, "gear", "Settings", app.settings_tab.is_some(), None).clicked() {
             app.settings_tab = Some(SettingsTab::General);
         }
-        ui.add_space(4.0);
-
-        // .sp-meter: speech is what dictation needs, text only sweetens it.
-        let filled = if speech_ok { 0.5 } else { 0.0 } + if text_ok { 0.5 } else { 0.0 };
-        let (m, _) = ui.allocate_exact_size(vec2(ui.available_width() - 12.0, 9.0), Sense::hover());
-        let m = m.translate(vec2(6.0, 0.0));
-        let p = ui.painter();
-        p.rect_filled(Rect::from_min_size(m.min, vec2(m.width() * filled, m.height())), 4.0, theme::INK);
-        p.rect_stroke(m, 4.0, Stroke::new(2.0, theme::INK), egui::StrokeKind::Inside);
-        ui.add_space(6.0);
-
-        // .sp-foot-row: a word on the left, the figure on the right.
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
-        let p = ui.painter();
-        p.text(pos2(r.left() + 6.0, r.center().y), Align2::LEFT_CENTER, "MODELS", FontId::new(9.0, theme::bold()), theme::FAINT);
-        let (word, tone) = match (speech_ok, text_ok) {
-            (true, true) => ("BOTH READY", theme::TEXT),
-            (true, false) => ("SPEECH ONLY", theme::AMBER),
-            _ => ("NOT READY", theme::RED),
-        };
-        p.text(pos2(r.right() - 6.0, r.center().y), Align2::RIGHT_CENTER, word, FontId::new(12.0, theme::display()), tone);
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
         ui.painter().rect_filled(line, 0.0, theme::LINE);
     });
@@ -164,6 +180,51 @@ fn logo(ui: &mut egui::Ui) {
     }
 }
 
+/// The kit's own icons, ported from its SVG sprite: a 24 unit grid, 2.3
+/// stroke, round caps and joins, drawn at 19px as .sp-item does.
+///
+/// The sprite holds twelve icons and has neither a clock nor a book, so those
+/// two are drawn to the same recipe rather than left in another family.
+fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
+    let k = 19.0 / 24.0;
+    let at = |x: f32, y: f32| pos2(c.x + (x - 12.0) * k, c.y + (y - 12.0) * k);
+    let st = Stroke::new(2.3 * k, color);
+    let line = |a: (f32, f32), b: (f32, f32)| egui::Shape::line_segment([at(a.0, a.1), at(b.0, b.1)], st);
+    let poly = |pts: &[(f32, f32)]| {
+        egui::Shape::line(pts.iter().map(|&(x, y)| at(x, y)).collect::<Vec<_>>(), st)
+    };
+    let ring = |r: f32| egui::Shape::circle_stroke(at(12.0, 12.0), r * k, st);
+    match name {
+        // i-home
+        "home" => {
+            p.add(poly(&[(4.0, 11.2), (12.0, 4.5), (20.0, 11.2), (20.0, 20.5), (4.0, 20.5), (4.0, 11.2)]));
+            p.add(poly(&[(9.0, 20.5), (9.0, 15.0), (15.0, 15.0), (15.0, 20.5)]));
+        }
+        // i-gear: a ring with eight spokes
+        "gear" => {
+            p.add(ring(3.2));
+            for i in 0..8 {
+                let a = std::f32::consts::TAU * i as f32 / 8.0;
+                let (sx, sy) = (12.0 + a.cos() * 5.9, 12.0 + a.sin() * 5.9);
+                let (ex, ey) = (12.0 + a.cos() * 8.6, 12.0 + a.sin() * 8.6);
+                p.add(line((sx, sy), (ex, ey)));
+            }
+        }
+        // not in the sprite, drawn to match it
+        "clock" => {
+            p.add(ring(7.8));
+            p.add(line((12.0, 12.0), (12.0, 7.2)));
+            p.add(line((12.0, 12.0), (15.6, 13.6)));
+        }
+        "book" => {
+            p.add(poly(&[(12.0, 7.0), (5.0, 5.2), (3.6, 5.2), (3.6, 17.6), (5.0, 17.6), (12.0, 19.4)]));
+            p.add(poly(&[(12.0, 7.0), (19.0, 5.2), (20.4, 5.2), (20.4, 17.6), (19.0, 17.6), (12.0, 19.4)]));
+            p.add(line((12.0, 7.0), (12.0, 19.4)));
+        }
+        other => draw_icon(p, other, c, color),
+    }
+}
+
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
 fn sp_cap(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
@@ -196,7 +257,7 @@ fn sp_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool, badge: Opti
         p.rect_stroke(r, 14.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
     }
     let fg = if active { theme::PAPER } else { theme::TEXT };
-    draw_icon(p, icon, pos2(r.left() + 20.0, r.center().y), fg);
+    kit_icon(p, icon, pos2(r.left() + 20.0, r.center().y), fg);
     p.text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, label, FontId::new(13.0, theme::medium()), fg);
     if let Some(n) = badge {
         // .sp-badge: outlined in whatever the row's colour is, display face.
@@ -241,7 +302,9 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.set_width(main_w);
             ui.label(d("Say it, skip the typing", 46.0, theme::TEXT));
-            ui.add_space(26.0);
+            ui.add_space(18.0);
+            setup_notice(app, ui, main_w);
+            ui.add_space(8.0);
             insights(app, ui, main_w);
         });
         ui.add_space(gap);
