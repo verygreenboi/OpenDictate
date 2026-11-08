@@ -367,12 +367,82 @@ fn status_line(ui: &mut egui::Ui, dot: Color32, what: &str, label: &str) {
     });
 }
 
-pub fn icon_button(ui: &mut egui::Ui, icon: &str, tip: &str) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-    if resp.hovered() {
-        ui.painter().rect_filled(r, 6.0, theme::NAV_ACTIVE);
+#[derive(Clone, Copy, PartialEq)]
+pub enum Btn {
+    Primary,
+    Secondary,
+}
+
+/// The kit's .b-primary and .b-secondary.
+///
+/// The press is the point: hovering shifts the button 3px and shrinks its
+/// shadow to 2/3, pressing shifts it the full 5/6 and the shadow disappears,
+/// so the button ends up sitting where its shadow was. Without that travel
+/// these are just outlined rectangles.
+///
+/// Rotation is the one part left out - the kit tilts these by about a degree
+/// and egui cannot rotate a laid out widget.
+pub fn kit_button(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32) -> egui::Response {
+    let font = FontId::new(15.0, theme::display());
+    let text = label.to_uppercase();
+    let pad = if kind == Btn::Primary { 32.0 } else { 22.0 };
+    let measured = ui.painter().layout_no_wrap(text.clone(), font.clone(), theme::INK).rect.width();
+    let w = (measured + pad * 2.0).max(min_w);
+    let (slot, resp) = ui.allocate_exact_size(vec2(w + 5.0, 50.0), Sense::click());
+    let base = Rect::from_min_size(slot.min, vec2(w, 44.0));
+    let (shift, lift) = if resp.is_pointer_button_down_on() {
+        (vec2(5.0, 6.0), 0.0)
+    } else if resp.hovered() {
+        (vec2(3.0, 3.0), 2.0)
+    } else {
+        (vec2(0.0, 0.0), 5.0)
+    };
+    let r = base.translate(shift);
+    // Primary is ink already; secondary turns into it on hover.
+    let inked = kind == Btn::Primary || resp.hovered();
+    let (fill, fg, edge) = if inked {
+        (theme::INK, theme::PAPER, theme::PAPER)
+    } else {
+        (theme::SURFACE, theme::INK, theme::INK)
+    };
+    let p = ui.painter();
+    if lift > 0.0 {
+        p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 16.0, theme::INK);
     }
-    draw_icon(ui.painter(), icon, r.center(), if resp.hovered() { theme::TEXT } else { theme::MUTED });
+    p.rect_filled(r, 16.0, fill);
+    p.rect_stroke(r, 16.0, Stroke::new(3.0, edge), egui::StrokeKind::Inside);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text,
+        0.0,
+        egui::TextFormat { font_id: font, color: fg, extra_letter_spacing: 15.0 * 0.045, ..Default::default() },
+    );
+    let g = p.layout_job(job);
+    p.galley(pos2(r.center().x - g.rect.width() / 2.0, r.center().y - g.rect.height() / 2.0), g, fg);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The kit's .inspect: a square icon button that presses onto its shadow and
+/// fills with ink while it is held.
+pub fn icon_button(ui: &mut egui::Ui, icon: &str, tip: &str) -> egui::Response {
+    let (slot, resp) = ui.allocate_exact_size(vec2(32.0, 33.0), Sense::click());
+    let base = Rect::from_min_size(slot.min, vec2(29.0, 29.0));
+    let down = resp.is_pointer_button_down_on();
+    let (shift, lift) = if down {
+        (vec2(3.0, 4.0), 0.0)
+    } else if resp.hovered() {
+        (vec2(1.0, 1.0), 2.0)
+    } else {
+        (vec2(0.0, 0.0), 3.0)
+    };
+    let r = base.translate(shift);
+    let p = ui.painter();
+    if lift > 0.0 {
+        p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 9.0, theme::INK);
+    }
+    p.rect_filled(r, 9.0, if down { theme::INK } else { theme::SURFACE });
+    p.rect_stroke(r, 9.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    kit_icon(p, icon, r.center(), if down { theme::PAPER } else { theme::INK });
     resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -414,11 +484,7 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         ui.add_space(0.0);
         ui.label(d("Insights", 24.0, theme::MUTED));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = egui::Button::new(m(format!("{} Share", crate::icon::SHARE), 14.0, theme::TEXT))
-                .fill(theme::SURFACE)
-                .stroke(Stroke::new(2.5, theme::INK))
-                .corner_radius(16);
-            share = ui.add(btn).clicked();
+            share = kit_button(ui, &format!("{}  Share", crate::icon::SHARE), Btn::Secondary, 0.0).clicked();
         });
     });
     if share {
@@ -633,8 +699,8 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
         (None, Some(_)) => ("Thinking…".to_string(), Color32::from_rgb(0x48, 0x48, 0x48)),
         _ => (format!("{}  Start dictating", crate::icon::MIC), theme::ACCENT),
     };
-    let btn = egui::Button::new(b(label, 14.0, theme::ON_FILL)).fill(fill).corner_radius(14).min_size(vec2(186.0, 42.0));
-    if ui.add_enabled(app.busy.is_none(), btn).clicked() {
+    let _ = fill;
+    if app.busy.is_none() && kit_button(ui, &label, Btn::Primary, 196.0).clicked() {
         if rec.is_some() {
             let ctx = ui.ctx().clone();
             app.stop_recording(&ctx);
@@ -953,9 +1019,10 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(b("Dictionary", 38.0, theme::TEXT));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = egui::Button::new(m("New word", 14.0, Color32::from_rgb(0x1A, 0x1A, 0x1A)))
-                .fill(Color32::from_rgb(0xF4, 0xF4, 0xF4))
-                .corner_radius(16)
+            let btn = egui::Button::new(d("NEW WORD", 12.0, theme::PAPER))
+                .fill(theme::INK)
+                .stroke(Stroke::new(2.5, theme::PAPER))
+                .corner_radius(11)
                 .min_size(vec2(0.0, 32.0));
             if ui.add(btn).clicked() {
                 app.new_word = Some(String::new());
@@ -995,7 +1062,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
                     r.request_focus();
                 }
                 add = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                add |= ui.add(egui::Button::new(b("Add", 14.0, theme::ON_FILL)).fill(theme::ACCENT)).clicked();
+                add |= ui.add(egui::Button::new(d("ADD", 12.0, theme::PAPER)).fill(theme::INK).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11)).clicked();
                 cancel = ui.button("Cancel").clicked();
             });
         });

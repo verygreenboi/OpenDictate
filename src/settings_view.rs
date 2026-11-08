@@ -341,7 +341,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(para("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
     ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(ui.available_width()).desired_rows(2));
     let running = app.test_running.load(std::sync::atomic::Ordering::SeqCst);
-    let btn = egui::Button::new(b(if running { "Running…" } else { "Run test" }, 14.0, theme::ON_FILL)).fill(theme::ACCENT);
+    let btn = egui::Button::new(d(if running { "RUNNING…" } else { "RUN TEST" }, 12.0, theme::PAPER)).fill(theme::INK).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11);
     if ui.add_enabled(!running, btn).clicked() {
         app.run_test(&ctx);
     }
@@ -508,7 +508,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         let testing = app.mic_test.is_some();
         let label = if testing { "Stop test" } else { "Test microphone" };
-        let btn = egui::Button::new(m(label, 13.5, theme::ON_FILL)).fill(if testing { theme::RED } else { theme::ACCENT });
+        let btn = egui::Button::new(d(label.to_uppercase(), 12.0, theme::PAPER)).fill(if testing { theme::RED } else { theme::INK }).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11);
         if ui.add_enabled(app.recording.is_none(), btn).clicked() {
             app.toggle_mic_test();
         }
