@@ -726,9 +726,14 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
                 // people stop seeing. Next to the button it is learned once.
                 if let Some(k) = app.s.keys(Action::Dictate).first() {
                     ui.add_space(14.0);
-                    ui.label(t("or press", 13.5, theme::MUTED));
-                    ui.add_space(2.0);
-                    kbd(ui, k);
+                    // A key chip fills the height of the row it is in. This
+                    // row is 50pt tall because of the button, so the hint
+                    // gets a row of the rail's height instead.
+                    ui.allocate_ui_with_layout(vec2(220.0, 30.0), Layout::left_to_right(Align::Center), |ui| {
+                        ui.label(t("or press", 13.5, theme::MUTED));
+                        ui.add_space(2.0);
+                        kbd(ui, k);
+                    });
                 }
             });
             ui.add_space(30.0);
@@ -968,10 +973,7 @@ fn start_button(app: &mut DictateApp, ui: &mut egui::Ui, min_w: f32) {
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
-        // Dictate is in the hero now, beside the button it belongs to; the
-        // card holds what the hero does not say.
-        let rest: Vec<Action> = Action::ALL.iter().copied().filter(|a| *a != Action::Dictate).collect();
-        for (i, a) in rest.iter().enumerate() {
+        for (i, a) in Action::ALL.iter().enumerate() {
             ui.label(t(a.label(), 12.5, Color32::from_rgb(0xD8, 0xD8, 0xD8)));
             ui.horizontal_wrapped(|ui| {
                 let keys = app.s.keys(*a);
@@ -982,7 +984,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
                     kbd(ui, k);
                 }
             });
-            if i + 1 < rest.len() {
+            if i + 1 < Action::ALL.len() {
                 ui.add_space(6.0);
             }
         }
