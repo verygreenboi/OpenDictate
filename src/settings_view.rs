@@ -52,8 +52,11 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
             ui.vertical(|ui| {
                 ui.set_width(size.x - 202.0);
                 ui.set_height(size.y);
-                ui.allocate_ui_with_layout(vec2(size.x - 202.0, 36.0), Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(14.0);
+                // The close button carries a shadow now, so it needs room:
+                // flush against the corner it sat on top of the sheet's edge.
+                ui.add_space(12.0);
+                ui.allocate_ui_with_layout(vec2(size.x - 202.0, 38.0), Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(20.0);
                     if icon_button(ui, "close", "Close").clicked() {
                         app.settings_tab = None;
                     }
@@ -573,27 +576,51 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     // both sides, and there are three gaps between them; leave that out and
     // the row demands more width than the pane has, which drags the whole
     // modal wider than every other tab.
+    // The sheet zeroes item_spacing.x, so the gap is stated here rather than
+    // inherited - reading it back gave zero and the cards tiled edge to edge.
+    const GAP: f32 = 10.0;
     let n = Tone::ALL.len() as f32;
-    let card_chrome = 10.0 * 2.0 + 2.0 * 2.0;
-    let gaps = ui.spacing().item_spacing.x * (n - 1.0);
-    let w = ((ui.available_width() - gaps) / n - card_chrome).max(56.0);
+    let card_chrome = 12.0 * 2.0 + 2.5 * 2.0;
+    let w = ((ui.available_width() - GAP * (n - 1.0)) / n - card_chrome).max(56.0);
     ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = GAP;
         for tone in Tone::ALL {
             let active = app.s.tone == tone;
             let resp = egui::Frame::new()
                 .fill(if active { theme::INK } else { theme::SURFACE })
-                .stroke(Stroke::new(2.0, theme::INK))
-                .corner_radius(10)
-                .inner_margin(Margin::same(10))
+                .stroke(Stroke::new(2.5, theme::INK))
+                .corner_radius(15)
+                .shadow(egui::epaint::Shadow {
+                    offset: if active { [0, 0] } else { [3, 4] },
+                    blur: 0,
+                    spread: 0,
+                    color: theme::SOFT_SHADOW,
+                })
+                .inner_margin(Margin { left: 12, right: 12, top: 11, bottom: 13 })
                 .show(ui, |ui| {
                     // Frame::show inherits the parent layout, and the parent
                     // here is horizontal: without this the label and blurb sit
                     // side by side and each card demands its full text width,
                     // which ran the row off the edge of the sheet.
+                    // Frame::show inherits the parent layout, and the parent
+                    // here is horizontal: without this the label and blurb sit
+                    // side by side and each card demands its full text width.
                     ui.vertical(|ui| {
                         ui.set_width(w);
                         ui.set_min_height(56.0);
-                        ui.label(m(tone.label(), 14.0, if active { theme::ON_FILL } else { theme::TEXT }));
+                        let fg = if active { theme::ON_FILL } else { theme::TEXT };
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            // A marker, not a second target: the card is the control.
+                            let (dr, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                            let p = ui.painter();
+                            p.circle_filled(dr.center(), 9.0, if active { theme::PAPER } else { theme::SURFACE });
+                            p.circle_stroke(dr.center(), 8.0, Stroke::new(2.0, fg));
+                            if active {
+                                p.circle_filled(dr.center(), 4.0, theme::INK);
+                            }
+                            ui.label(m(tone.label(), 14.0, fg));
+                        });
                         ui.label(para(tone.blurb(), 12.0, if active { theme::ON_FILL_DIM } else { theme::MUTED }));
                     });
                 });

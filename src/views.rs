@@ -283,6 +283,11 @@ fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
             ));
             p.add(line((10.0, 20.5), (14.0, 20.5)));
         }
+        // i-lens
+        "lens" => {
+            p.add(egui::Shape::circle_stroke(at(10.0, 10.0), 6.2 * k, Stroke::new(2.4 * k, color)));
+            p.add(line((14.6, 14.6), (20.5, 20.5)));
+        }
         // i-x
         "x" => {
             p.add(line((7.0, 7.0), (17.0, 17.0)));
@@ -1131,10 +1136,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
         );
         pill_tabs(ui, &mut app.dict_filter, &[(0, "All"), (1, &auto_tab), (2, &manual_tab)]);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let (r, resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
-            ui.painter().circle_filled(r.center(), 16.0, Color32::from_rgb(0x3C, 0x3C, 0x3C));
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::icon::SEARCH, FontId::proportional(13.0), theme::MUTED);
-            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            if icon_button(ui, "lens", "Search words").clicked() {
                 app.dict_search = if app.dict_search.is_some() { None } else { Some(String::new()) };
             }
             if let Some(q) = &mut app.dict_search {
