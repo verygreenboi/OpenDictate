@@ -179,6 +179,28 @@ pub fn install(ctx: &egui::Context) {
         w.corner_radius = egui::CornerRadius::same(11);
     }
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, LINE);
+
+    // Popups and tooltips follow .menu: an ink edge over a hard shadow. The
+    // kit's .tip is yellow, but egui draws every popup from one set of values,
+    // so a yellow tooltip would drag the dropdown lists with it.
+    v.window_fill = SURFACE;
+    v.window_stroke = egui::Stroke::new(2.5, INK);
+    v.window_corner_radius = egui::CornerRadius::same(14);
+    v.menu_corner_radius = egui::CornerRadius::same(14);
+    let hard = egui::epaint::Shadow { offset: [3, 4], blur: 0, spread: 0, color: SOFT_SHADOW };
+    v.popup_shadow = hard;
+    v.window_shadow = hard;
+
+    // Scrollbar: a slim ink handle that keeps out of the way until wanted.
+    style.spacing.scroll.floating = true;
+    style.spacing.scroll.bar_width = 9.0;
+    style.spacing.scroll.floating_width = 5.0;
+    style.spacing.scroll.foreground_color = true;
+    style.spacing.scroll.dormant_handle_opacity = 0.25;
+    style.spacing.scroll.active_handle_opacity = 0.6;
+    style.spacing.scroll.interact_handle_opacity = 0.9;
+    style.spacing.scroll.dormant_background_opacity = 0.0;
+    style.spacing.scroll.active_background_opacity = 0.0;
     // The kit's slider is a plain track with an ink thumb; egui's trailing
     // fill would paint it in the selection colour, which is the accent blue.
     style.visuals.slider_trailing_fill = false;
