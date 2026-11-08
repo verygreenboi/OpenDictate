@@ -66,7 +66,7 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     // On a cold start the text model is still being looked for. Saying
     // something is missing before we know would be a lie that fixes itself.
     let still_looking = text.starts_with("Checking");
-    if speech_ok && (text_ok || still_looking) {
+    if speech_ok && (text_ok || still_looking || app.s.hide_text_model_notice) {
         return;
     }
     // The model names mean nothing to someone who never picked one. Say what
@@ -97,7 +97,9 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
             ui.set_width(w - 33.0);
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    ui.set_width(w - 33.0 - 170.0);
+                    // Reserve for both actions: 168 + 6 + 104, plus air.
+                    let actions = if speech_ok { 296.0 } else { 184.0 };
+                    ui.set_width(w - 33.0 - actions);
                     ui.spacing_mut().item_spacing.y = 5.0;
                     ui.horizontal(|ui| {
                         // Allocated rather than painted at the cursor, so the
@@ -110,24 +112,37 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     ui.label(para(body, 13.0, fg));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Painted rather than an egui Button: giving a Button an
+                    // Painted rather than egui Buttons: giving a Button an
                     // explicit fill and stroke freezes it, so it never showed
                     // a hover. The kit inverts these on hover.
-                    let (br, bresp) = ui.allocate_exact_size(vec2(168.0, 30.0), Sense::click());
-                    let hot = bresp.hovered();
-                    let p = ui.painter();
-                    p.rect_filled(br, 8.0, if hot { fg } else { fill });
-                    p.rect_stroke(br, 8.0, Stroke::new(2.0, fg), egui::StrokeKind::Inside);
-                    p.text(
-                        br.center(),
-                        Align2::CENTER_CENTER,
-                        action,
-                        FontId::new(11.0, theme::display()),
-                        if hot { fill } else { fg },
-                    );
-                    if bresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                    let mut notice_btn = |ui: &mut egui::Ui, label: &str, w: f32| {
+                        let (br, bresp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
+                        let hot = bresp.hovered();
+                        let p = ui.painter();
+                        p.rect_filled(br, 8.0, if hot { fg } else { fill });
+                        p.rect_stroke(br, 8.0, Stroke::new(2.0, fg), egui::StrokeKind::Inside);
+                        p.text(
+                            br.center(),
+                            Align2::CENTER_CENTER,
+                            label,
+                            FontId::new(11.0, theme::display()),
+                            if hot { fill } else { fg },
+                        );
+                        bresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                    };
+                    if notice_btn(ui, action, 168.0) {
                         app.settings_tab = Some(SettingsTab::Models);
                         app.refresh_health(ui.ctx());
+                    }
+                    // Declining is only offered for the optional download.
+                    // Hiding the blocking one would leave a shortcut that
+                    // silently does nothing and no sign of why.
+                    if speech_ok {
+                        ui.add_space(6.0);
+                        if notice_btn(ui, "NO THANKS", 104.0) {
+                            app.s.hide_text_model_notice = true;
+                            app.changed();
+                        }
                     }
                 });
             });

@@ -165,6 +165,9 @@ pub struct Settings {
     pub auto_paste: bool,
     pub restore_clipboard: bool,
     pub show_indicator: bool,
+    /// Set when someone declines the optional text model, so the notice about
+    /// it stops asking. The notice that blocks dictation is not dismissible.
+    pub hide_text_model_notice: bool,
     pub typing_wpm: f32,
     pub keep_history: KeepHistory,
 
@@ -225,6 +228,7 @@ impl Default for Settings {
             auto_paste: true,
             restore_clipboard: true,
             show_indicator: true,
+            hide_text_model_notice: false,
             typing_wpm: 40.0,
             keep_history: KeepHistory::Forever,
 
