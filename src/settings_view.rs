@@ -179,7 +179,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     for p in &local {
                         let s = p.to_string_lossy().into_owned();
                         let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                        changed |= ui.selectable_value(&mut app.s.whisper_model, s, name).changed();
+                        changed |= crate::views::combo_value(ui, &mut app.s.whisper_model, s, name).changed();
                     }
                 });
                 ui.label(t("Or paste the path to your own model file:", 12.0, theme::FAINT));
@@ -286,7 +286,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                         ui.label("No models found");
                     }
                     for name in &list {
-                        changed |= ui.selectable_value(&mut app.s.ollama_model, name.clone(), name).changed();
+                        changed |= crate::views::combo_value(ui, &mut app.s.ollama_model, name.clone(), name).changed();
                     }
                 });
                 changed |= ui.add(egui::TextEdit::singleline(&mut app.s.ollama_model).desired_width(300.0)).changed();
@@ -344,7 +344,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 if !list.is_empty() {
                     egui::ComboBox::from_id_salt("rmodel").width(300.0).selected_text(app.s.text_model.clone()).show_ui(ui, |ui| {
                         for name in &list {
-                            changed |= ui.selectable_value(&mut app.s.text_model, name.clone(), name).changed();
+                            changed |= crate::views::combo_value(ui, &mut app.s.text_model, name.clone(), name).changed();
                         }
                     });
                 }
@@ -457,7 +457,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         let mut v = app.s.translate_to.clone();
         egui::ComboBox::from_id_salt("tr").width(204.0).selected_text(v.clone()).show_ui(ui, |ui| {
             for l in langs {
-                ui.selectable_value(&mut v, l.to_string(), l);
+                crate::views::combo_value(ui, &mut v, l.to_string(), l);
             }
         });
         if v != app.s.translate_to {
@@ -504,9 +504,9 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         let selected = if app.s.microphone.is_empty() { default_label.clone() } else { app.s.microphone.clone() };
         let mut mic = app.s.microphone.clone();
         egui::ComboBox::from_id_salt("mic").width(260.0).selected_text(selected).show_ui(ui, |ui| {
-            ui.selectable_value(&mut mic, String::new(), default_label);
+            crate::views::combo_value(ui, &mut mic, String::new(), default_label);
             for name in &app.mics {
-                ui.selectable_value(&mut mic, name.clone(), name);
+                crate::views::combo_value(ui, &mut mic, name.clone(), name);
             }
         });
         if !mic.is_empty() && !app.mics.contains(&mic) {

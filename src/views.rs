@@ -434,6 +434,43 @@ pub fn link(ui: &mut egui::Ui, text: &str) -> egui::Response {
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A row in a dropdown.
+///
+/// egui takes a selected row's fill from visuals.selection.bg_fill but its
+/// text from the global override, so filling it with ink left the label
+/// invisible. This paints both, the way everything else chosen in the kit
+/// does: ink underneath, paper on top.
+pub fn combo_item(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
+    let font = FontId::new(13.0, theme::medium());
+    let g = ui.painter().layout_no_wrap(label.to_string(), font.clone(), theme::TEXT);
+    let h = (g.rect.height() + 13.0).max(30.0);
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
+    let p = ui.painter();
+    if selected {
+        p.rect_filled(r, 9.0, theme::INK);
+    } else if resp.hovered() {
+        p.rect_filled(r, 9.0, theme::PAPER);
+    }
+    p.text(
+        pos2(r.left() + 10.0, r.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        if selected { theme::PAPER } else { theme::TEXT },
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// `selectable_value` for a dropdown, drawn by combo_item.
+pub fn combo_value<T: PartialEq + Clone>(ui: &mut egui::Ui, current: &mut T, value: T, label: impl AsRef<str>) -> egui::Response {
+    let mut r = combo_item(ui, *current == value, label.as_ref());
+    if r.clicked() {
+        *current = value;
+        r.mark_changed();
+    }
+    r
+}
+
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
 fn sp_cap(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
@@ -1004,7 +1041,7 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
                 let mut k = app.s.keep_history;
                 egui::ComboBox::from_id_salt("keep").width(140.0).selected_text(m(k.label(), 14.0, theme::TEXT)).show_ui(ui, |ui| {
                     for o in KeepHistory::ALL {
-                        ui.selectable_value(&mut k, o, o.label());
+                        combo_value(ui, &mut k, o, o.label());
                     }
                 });
                 if k != app.s.keep_history {
