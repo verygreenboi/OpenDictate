@@ -11,6 +11,23 @@ use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Margin, S
 /// Each tab's title and standfirst. They belong to the sheet, not to the
 /// tab's body: inside the scroll area they scrolled away from the close
 /// button and left the sheet with no heading.
+/// A second control that stays hidden until someone asks for it.
+///
+/// Settings here kept showing a dropdown and a text field for one value. The
+/// field is the escape hatch - a path or a name the list does not carry - so
+/// it waits behind a link unless the current value already needs it.
+fn disclosed(ui: &mut egui::Ui, key: &str, label: &str, force: bool) -> bool {
+    let id = ui.id().with(("disclose", key));
+    if force || ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {
+        return true;
+    }
+    if crate::views::link(ui, label).clicked() {
+        ui.data_mut(|d| d.insert_temp(id, true));
+        return true;
+    }
+    false
+}
+
 fn tab_header(tab: SettingsTab) -> (&'static str, &'static str) {
     match tab {
         SettingsTab::Models => (
@@ -254,8 +271,14 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                         changed |= crate::views::combo_value(ui, &mut app.s.whisper_model, s, name).changed();
                     }
                 });
-                ui.label(t("Or paste the path to your own model file:", 12.0, theme::FAINT));
-                changed |= ui.add(egui::TextEdit::singleline(&mut app.s.whisper_model).desired_width(300.0)).changed();
+                // Only needed when the file lives somewhere the list cannot
+                // see, so it is offered rather than always present.
+                let custom = !app.s.whisper_model.is_empty()
+                    && !local.iter().any(|p| p.to_string_lossy() == app.s.whisper_model);
+                if disclosed(ui, "wpath", "Use a file not in this list", custom) {
+                    ui.add_space(4.0);
+                    changed |= ui.add(egui::TextEdit::singleline(&mut app.s.whisper_model).desired_width(300.0)).changed();
+                }
             });
             ui.label(m("Download a model", 14.0, theme::TEXT));
             ui.add_space(4.0);
@@ -392,7 +415,17 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
                     for sug in ["llama3.2:3b", "qwen2.5:3b", "gemma3:4b"] {
-                        if ui.button(sug).clicked() {
+                        let have = list.iter().any(|m| m == sug || m.trim_end_matches(":latest") == sug);
+                        if have {
+                            // Already here: ticked, and not offered again.
+                            let label = format!("{}  {sug}", crate::icon::CHECK);
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(t(label, 13.0, theme::FAINT))
+                                    .fill(theme::SURFACE)
+                                    .stroke(Stroke::new(2.0, theme::FAINT)),
+                            );
+                        } else if ui.button(sug).clicked() {
                             app.pull_name = sug.into();
                         }
                     }
@@ -428,15 +461,25 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             });
             let list = health.remote_text.clone().and_then(|r| r.ok()).unwrap_or_default();
             row(ui, "Model name", "", 300.0, |ui| {
-                if !list.is_empty() {
-                    egui::ComboBox::from_id_salt("rmodel").width(300.0).selected_text(app.s.text_model.clone()).show_ui(ui, |ui| {
-                        for name in &list {
-                            changed |= crate::views::combo_value(ui, &mut app.s.text_model, name.clone(), name).changed();
-                        }
-                    });
+                let listed = list.iter().any(|n| *n == app.s.text_model);
+                if list.is_empty() {
+                    changed |= ui.add(egui::TextEdit::singleline(&mut app.s.text_model).desired_width(300.0)).changed();
+                } else {
+                    egui::ComboBox::from_id_salt("rmodel")
+                        .width(300.0)
+                        .selected_text(app.s.text_model.clone())
+                        .show_ui(ui, |ui| {
+                            for name in &list {
+                                changed |= crate::views::combo_value(ui, &mut app.s.text_model, name.clone(), name).changed();
+                            }
+                        });
+                    if disclosed(ui, "rmodel-name", "Type a name the server did not list", !listed) {
+                        ui.add_space(4.0);
+                        changed |= ui.add(egui::TextEdit::singleline(&mut app.s.text_model).desired_width(300.0)).changed();
+                    }
                 }
-                changed |= ui.add(egui::TextEdit::singleline(&mut app.s.text_model).desired_width(300.0)).changed();
-                if ui.small_button("Fetch model list").clicked() {
+                ui.add_space(6.0);
+                if ui.button("Fetch model list").clicked() {
                     app.refresh_health(&ctx);
                 }
                 if let Some(Err(e)) = &health.remote_text {
