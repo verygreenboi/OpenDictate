@@ -309,9 +309,6 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             });
         }
     }
-    row(ui, "Spoken language", "What to listen for. Detecting it works well for most people.", 300.0, |ui| {
-        changed |= spoken_picker(ui, &mut app.s.language, 300.0, "spoken-models");
-    });
 
     section(ui, crate::icon::WAND, "Text clean-up");
     row(ui, "Engine", "What tidies up, translates and answers.", 300.0, |ui| {

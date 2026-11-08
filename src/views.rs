@@ -132,7 +132,7 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     // Painted rather than egui Buttons: giving a Button an
                     // explicit fill and stroke freezes it, so it never showed
                     // a hover. The kit inverts these on hover.
-                    let mut notice_btn = |ui: &mut egui::Ui, label: &str| {
+                    let notice_btn = |ui: &mut egui::Ui, label: &str| {
                         let (br, bresp) = ui.allocate_exact_size(vec2(bw, 30.0), Sense::click());
                         let hot = bresp.hovered();
                         let p = ui.painter();
