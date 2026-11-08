@@ -25,8 +25,9 @@ pub const MUTED: Color32 = Color32::from_rgb(0xA8, 0xA7, 0xA2);
 pub const FAINT: Color32 = Color32::from_rgb(0x8B, 0x8A, 0x85);
 /// --follow. The kit's blue reads as settled and working.
 pub const ACCENT: Color32 = Color32::from_rgb(0x8F, 0xB6, 0xEF);
-/// --convert, used where the old theme said green: a thing that is fine.
-pub const GREEN: Color32 = Color32::from_rgb(0x9A, 0xBE, 0xEF);
+/// --green. Settled: set up and working. The kit had no green - blue carried
+/// this and "in flight" at once - so one was added to it for this.
+pub const GREEN: Color32 = Color32::from_rgb(0x86, 0xD2, 0x9B);
 /// --red
 pub const RED: Color32 = Color32::from_rgb(0xE0, 0x49, 0x3D);
 /// --y2. Yellow has noticed; something wants attention soon.
