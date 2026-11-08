@@ -109,8 +109,29 @@ tone!(
 /// takes on what is behind the window.
 #[allow(non_snake_case)]
 pub fn BG_SHEER() -> Color32 {
+    // With the AppKit backdrop in place the wash is painted there instead,
+    // across the titlebar too, so painting it here as well would double it.
+    if BACKDROP.load(Ordering::Relaxed) {
+        return Color32::TRANSPARENT;
+    }
     let p = PAPER();
-    Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 184)
+    Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), SHEER)
+}
+
+/// How much paper the page keeps over whatever is behind the window.
+pub const SHEER: u8 = 184;
+
+static BACKDROP: AtomicBool = AtomicBool::new(false);
+
+/// Said once the blurred backdrop is carrying the wash.
+pub fn set_backdrop(on: bool) {
+    BACKDROP.store(on, Ordering::Relaxed);
+}
+
+/// The wash, as AppKit wants it: straight sRGB components, 0 to 1.
+pub fn sheer_rgba() -> [f64; 4] {
+    let p = PAPER();
+    [p.r() as f64 / 255.0, p.g() as f64 / 255.0, p.b() as f64 / 255.0, SHEER as f64 / 255.0]
 }
 
 /// The streak ramp, coldest first. Dark climbs towards the kit's blue; light

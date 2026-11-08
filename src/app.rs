@@ -704,8 +704,9 @@ impl DictateApp {
         if !self.blurred {
             // 300 is wide enough to tell the real window from the 1x1 root
             // anchor, which carries the same title.
-            self.blurred = crate::macos_look::blur_window(300.0);
+            self.blurred = crate::macos_look::blur_window(300.0, theme::sheer_rgba());
             if self.blurred {
+                theme::set_backdrop(true);
                 self.window_since = Some(std::time::Instant::now());
             }
         }
@@ -824,6 +825,8 @@ impl eframe::App for DictateApp {
         if light != theme::is_light() {
             theme::set_light(light);
             theme::apply_style(ctx);
+            #[cfg(target_os = "macos")]
+            crate::macos_look::set_backdrop_tint(theme::sheer_rgba());
         }
         self.window_lifecycle(ctx);
         while let Ok(e) = self.hk_rx.try_recv() {
