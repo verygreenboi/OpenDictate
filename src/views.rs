@@ -165,8 +165,15 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     // the shadow has somewhere to fall inside the pane.
     let rect = ui.max_rect().shrink2(vec2(7.0, 10.0));
     let p = ui.painter();
-    p.rect_filled(rect.translate(vec2(5.0, 6.0)), 18.0, theme::INK());
-    p.rect_filled(rect, 18.0, theme::SURFACE());
+    let shadow = rect.translate(vec2(5.0, 6.0));
+    if theme::is_sheer() {
+        // A solid shadow behind a panel you can see through is just a cream
+        // slab filling it. The kit's hard offset becomes a second outline.
+        p.rect_stroke(shadow, 18.0, Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
+    } else {
+        p.rect_filled(shadow, 18.0, theme::INK());
+    }
+    p.rect_filled(rect, 18.0, theme::PANEL_SHEER());
     p.rect_stroke(rect, 18.0, Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
 
     let inner = rect.shrink2(vec2(10.0, 12.0));
@@ -822,12 +829,12 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     personalization_card(app, ui, w);
 
     let rect = Rect::from_min_max(pos2(left - 12.0, top - 12.0), pos2(left + w + 12.0, ui.cursor().top() + 4.0));
-    let mut shapes = vec![egui::Shape::rect_filled(rect, 14.0, theme::PAPER())];
+    let mut shapes = vec![egui::Shape::rect_filled(rect, 14.0, theme::PANEL_SHEER())];
     let mut y = rect.top() + 4.0;
     while y < rect.bottom() - 2.0 {
         let mut x = rect.left() + 4.0;
         while x < rect.right() - 2.0 {
-            shapes.push(egui::Shape::rect_filled(Rect::from_min_size(pos2(x, y), vec2(1.0, 1.0)), 0.0, Color32::from_rgba_unmultiplied(0xF4, 0xF3, 0xEF, 20)));
+            shapes.push(egui::Shape::rect_filled(Rect::from_min_size(pos2(x, y), vec2(1.0, 1.0)), 0.0, theme::INK().gamma_multiply(0.08)));
             x += 6.0;
         }
         y += 6.0;
