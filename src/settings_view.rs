@@ -8,6 +8,22 @@ use crate::theme::{self, b, d, m, para, t};
 use crate::views::{VERSION, icon_button, kbd, nav_item};
 use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Margin, Sense, Stroke, vec2};
 
+/// Each tab's title and standfirst. They belong to the sheet, not to the
+/// tab's body: inside the scroll area they scrolled away from the close
+/// button and left the sheet with no heading.
+fn tab_header(tab: SettingsTab) -> (&'static str, &'static str) {
+    match tab {
+        SettingsTab::Models => (
+            "Models",
+            "You choose what turns your voice into text and what tidies it up. Nothing runs anywhere you didn't pick.",
+        ),
+        SettingsTab::General => ("Settings", "Shortcuts, language and what happens to the text."),
+        SettingsTab::Audio => ("Audio input", "Which microphone to listen to, and how loud it comes in."),
+        SettingsTab::Personalization => ("Personalization", "How your dictation should read once it is tidied up."),
+        SettingsTab::About => ("About", "What this is and where your data lives."),
+    }
+}
+
 pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     let size = vec2((screen.width() - 80.0).min(940.0), (screen.height() - 80.0).min(660.0));
@@ -52,15 +68,28 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
             ui.vertical(|ui| {
                 ui.set_width(size.x - 202.0);
                 ui.set_height(size.y);
-                // The close button carries a shadow now, so it needs room:
-                // flush against the corner it sat on top of the sheet's edge.
-                ui.add_space(12.0);
-                ui.allocate_ui_with_layout(vec2(size.x - 202.0, 38.0), Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(20.0);
-                    if icon_button(ui, "close", "Close").clicked() {
-                        app.settings_tab = None;
-                    }
+                // Pinned header: the heading stays put while the body scrolls,
+                // and the close button keeps its shadow clear of the corner.
+                ui.add_space(14.0);
+                let (title, standfirst) = tab_header(tab);
+                ui.horizontal_top(|ui| {
+                    ui.add_space(36.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(size.x - 202.0 - 36.0 - 76.0);
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.label(d(title, 24.0, theme::TEXT));
+                        ui.label(para(standfirst, 13.0, theme::MUTED));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                        ui.add_space(20.0);
+                        if icon_button(ui, "close", "Close").clicked() {
+                            app.settings_tab = None;
+                        }
+                    });
                 });
+                ui.add_space(14.0);
+                let (hr, _) = ui.allocate_exact_size(vec2(size.x - 202.0, 1.5), Sense::hover());
+                ui.painter().rect_filled(hr, 0.0, theme::LINE);
                 egui::ScrollArea::vertical().id_salt(("settings-scroll", tab as u8)).auto_shrink(false).show(ui, |ui| {
                     egui::Frame::new().inner_margin(Margin { left: 36, right: 36, top: 0, bottom: 30 }).show(ui, |ui| {
                         ui.set_width(size.x - 202.0 - 72.0);
@@ -127,9 +156,6 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
 }
 
 fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(d("Models", 24.0, theme::TEXT));
-    ui.label(para("You choose what turns your voice into text and what tidies it up. Nothing runs anywhere you didn't pick.", 13.5, theme::MUTED));
-    ui.add_space(10.0);
     egui::Frame::new()
         .fill(Color32::from_rgb(0x2E, 0x3A, 0x5E))
         .stroke(Stroke::new(1.0, Color32::from_rgb(0x44, 0x5A, 0x96)))
@@ -385,7 +411,6 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(d("Settings", 24.0, theme::TEXT));
     section(ui, crate::icon::KEYBOARD, "Shortcuts");
     // One choice of two, which is what the segmented control is for. As a
     // pair of selectable labels the unchosen one looked like plain text and
@@ -493,7 +518,6 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(d("Audio input", 24.0, theme::TEXT));
     section(ui, crate::icon::MIC_VOCAL, "Microphone");
     let mut changed = false;
     row(ui, "Microphone", "Which microphone records your voice.", 260.0, |ui| {
@@ -588,7 +612,6 @@ pub fn open_mic_privacy() {
 }
 
 fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(d("Personalization", 24.0, theme::TEXT));
     section(ui, crate::icon::PALETTE, "Tone");
     // Four cards across. Each one costs its inner margin and its border on
     // both sides, and there are three gaps between them; leave that out and
@@ -677,8 +700,6 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(b("About", 24.0, theme::TEXT));
-    ui.add_space(8.0);
     ui.label(t(format!("Open Dictate v{VERSION}"), 14.0, theme::TEXT));
     ui.label(para(
         "Voice dictation that runs on the models you choose. Speak in any app; your words are transcribed, tidied up and pasted where your cursor is.",
