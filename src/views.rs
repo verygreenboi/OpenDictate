@@ -51,81 +51,91 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
 // Sidebar
 
 fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
-    let rect = ui.max_rect().expand2(vec2(2.0, 0.0));
-    ui.painter().rect_filled(rect, 14.0, theme::SIDEBAR);
-    ui.add_space(34.0);
+    // The kit's .sidepanel: a 3px ink outline over a hard ink shadow. Inset so
+    // the shadow has somewhere to fall inside the pane.
+    let rect = ui.max_rect().shrink2(vec2(7.0, 10.0));
+    let p = ui.painter();
+    p.rect_filled(rect.translate(vec2(5.0, 6.0)), 18.0, theme::INK);
+    p.rect_filled(rect, 18.0, theme::SURFACE);
+    p.rect_stroke(rect, 18.0, Stroke::new(3.0, theme::INK), egui::StrokeKind::Inside);
+
+    let inner = rect.shrink2(vec2(10.0, 12.0));
+    let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
+    let ui = &mut ui;
+
+    // .sp-head
     ui.horizontal(|ui| {
-        ui.add_space(10.0);
+        ui.add_space(4.0);
         logo(ui);
-        ui.label(d("Open Dictate", 18.0, theme::TEXT));
-        egui::Frame::new()
-            .fill(Color32::from_rgb(0x46, 0x46, 0x46))
-            .corner_radius(4)
-            .inner_margin(Margin::symmetric(5, 1))
-            .show(ui, |ui| ui.label(t("Local", 11.0, theme::MUTED)));
+        ui.add_space(4.0);
+        ui.label(d("OPEN DICTATE", 15.0, theme::TEXT));
     });
-    ui.add_space(18.0);
-    for (page, icon, label) in [(Page::Home, "home", "Home"), (Page::History, "clock", "History"), (Page::Dictionary, "book", "Dictionary")] {
-        if nav_item(ui, icon, label, app.page == page).clicked() {
+    ui.add_space(4.0);
+
+    let hist = app.history.len();
+    let words = app.s.dictionary.len();
+    sp_cap(ui, "PAGES");
+    for (page, icon, label, badge) in [
+        (Page::Home, "home", "Home", None),
+        (Page::History, "clock", "History", (hist > 0).then(|| hist.to_string())),
+        (Page::Dictionary, "book", "Dictionary", (words > 0).then(|| words.to_string())),
+    ] {
+        if sp_item(ui, icon, label, app.page == page, badge).clicked() {
             app.page = page;
         }
     }
 
-    // Bottom (laid out upwards): footer icons, then the model status card where
-    // the original has its plan card.
-    let (speech_ok, speech) = app.speech_ready();
-    let (text_ok, text) = app.text_ready();
-    // Only the speech model is needed to dictate; the text model is optional.
-    let all_ok = speech_ok;
-    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            if icon_button(ui, "mic", "Audio input").clicked() {
-                app.settings_tab = Some(SettingsTab::Audio);
+    sp_cap(ui, "SETTINGS");
+    for (icon, label, tab) in [
+        ("mic", "Audio input", SettingsTab::Audio),
+        ("spark", "Personalization", SettingsTab::Personalization),
+        ("gear", "Settings", SettingsTab::General),
+        ("help", "About", SettingsTab::About),
+    ] {
+        if sp_item(ui, icon, label, app.settings_tab == Some(tab), None).clicked() {
+            if tab == SettingsTab::Audio {
                 app.refresh_mics();
             }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.add_space(4.0);
-                if icon_button(ui, "help", "About").clicked() {
-                    app.settings_tab = Some(SettingsTab::About);
-                }
-                if icon_button(ui, "gear", "Settings").clicked() {
-                    app.settings_tab = Some(SettingsTab::General);
-                }
-                if icon_button(ui, "spark", "Personalization").clicked() {
-                    app.settings_tab = Some(SettingsTab::Personalization);
-                }
-            });
-        });
-        ui.add_space(2.0);
-        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-        ui.painter().rect_filled(r, 0.0, theme::LINE);
+            app.settings_tab = Some(tab);
+        }
+    }
+
+    // .sp-foot, laid out upwards from the bottom of the panel.
+    let (speech_ok, _) = app.speech_ready();
+    let (text_ok, _) = app.text_ready();
+    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+        let btn = egui::Button::new(b("Manage models", 14.0, theme::ON_FILL))
+            .fill(theme::ACCENT)
+            .corner_radius(14)
+            .min_size(vec2(ui.available_width(), 38.0));
+        if ui.add(btn).clicked() {
+            app.settings_tab = Some(SettingsTab::Models);
+            app.refresh_health(ui.ctx());
+        }
         ui.add_space(8.0);
-        let card_h = 176.0;
-        let (slot, _) = ui.allocate_exact_size(vec2(ui.available_width(), card_h), Sense::hover());
-        let mut card = ui.new_child(egui::UiBuilder::new().max_rect(slot).layout(Layout::top_down(Align::Min)));
-        theme::soft(theme::SURFACE, 12, 2.5, 3).inner_margin(Margin::same(12)).show(&mut card, |ui| {
-            ui.set_width(ui.available_width());
-            ui.set_height(card_h - 24.0);
-            {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                ui.label(t("Running on your models", 13.5, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
-                status_line(ui, if speech_ok { theme::GREEN } else { theme::RED }, "Speech", &speech);
-                status_line(ui, if text_ok { theme::GREEN } else { theme::AMBER }, "Text", &text);
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 3.0), Sense::hover());
-                ui.painter().rect_filled(r, 2.0, if all_ok { theme::GREEN } else { theme::RED });
-                ui.add_space(6.0);
-                let btn = egui::Button::new(b("Manage models", 15.0, theme::ON_FILL))
-                    .fill(theme::ACCENT)
-                    .corner_radius(18)
-                    .min_size(vec2(ui.available_width(), 38.0));
-                if ui.add(btn).clicked() {
-                    app.settings_tab = Some(SettingsTab::Models);
-                    app.refresh_health(ui.ctx());
-                }
-            }
-        });
+
+        // .sp-meter: speech is what dictation needs, text only sweetens it.
+        let filled = if speech_ok { 0.5 } else { 0.0 } + if text_ok { 0.5 } else { 0.0 };
+        let (m, _) = ui.allocate_exact_size(vec2(ui.available_width() - 12.0, 9.0), Sense::hover());
+        let m = m.translate(vec2(6.0, 0.0));
+        let p = ui.painter();
+        p.rect_filled(Rect::from_min_size(m.min, vec2(m.width() * filled, m.height())), 4.0, theme::INK);
+        p.rect_stroke(m, 4.0, Stroke::new(2.0, theme::INK), egui::StrokeKind::Inside);
+        ui.add_space(6.0);
+
+        // .sp-foot-row: a word on the left, the figure on the right.
+        let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 16.0), Sense::hover());
+        let p = ui.painter();
+        p.text(pos2(r.left() + 6.0, r.center().y), Align2::LEFT_CENTER, "MODELS", FontId::new(9.0, theme::bold()), theme::FAINT);
+        let (word, tone) = match (speech_ok, text_ok) {
+            (true, true) => ("BOTH READY", theme::TEXT),
+            (true, false) => ("SPEECH ONLY", theme::AMBER),
+            _ => ("NOT READY", theme::RED),
+        };
+        p.text(pos2(r.right() - 6.0, r.center().y), Align2::RIGHT_CENTER, word, FontId::new(12.0, theme::display()), tone);
+        ui.add_space(10.0);
+        let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
+        ui.painter().rect_filled(line, 0.0, theme::LINE);
     });
 }
 
@@ -148,31 +158,64 @@ pub fn draw_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
     p.text(c, Align2::CENTER_CENTER, glyph, FontId::proportional(17.0), color);
 }
 
+/// The kit's .sp-logo: a 30px ink-bordered square in yellow, with its own
+/// small hard shadow, holding the three bars mark.
 fn logo(ui: &mut egui::Ui) {
-    let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+    let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
     let p = ui.painter();
+    p.rect_filled(r.translate(vec2(2.0, 3.0)), 9.0, theme::INK);
+    p.rect_filled(r, 9.0, theme::AMBER);
+    p.rect_stroke(r, 9.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
     let c = r.center();
     for (i, h) in [8.0, 14.0, 10.0].iter().enumerate() {
         let x = c.x - 5.0 + i as f32 * 5.0;
-        p.rect_filled(Rect::from_center_size(pos2(x, c.y), vec2(3.0, *h)), 1.5, theme::TEXT);
+        p.rect_filled(Rect::from_center_size(pos2(x, c.y), vec2(3.0, *h)), 1.5, theme::PAPER);
     }
 }
 
-pub fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
-    if active || resp.hovered() {
-        ui.painter().rect_filled(r, 8.0, if active { theme::NAV_ACTIVE } else { theme::LINE });
-    }
-    let p = ui.painter();
-    draw_icon(p, icon, pos2(r.left() + 20.0, r.center().y), if active { theme::PAPER } else { theme::MUTED });
-    p.text(
-        pos2(r.left() + 36.0, r.center().y),
+/// The kit's .sp-cap: a group heading, tiny and widely tracked.
+fn sp_cap(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(8.0);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 13.0), Sense::hover());
+    let spaced: String = text.chars().flat_map(|c| [c, ' ']).collect();
+    ui.painter().text(
+        pos2(r.left() + 10.0, r.center().y),
         Align2::LEFT_CENTER,
-        label,
-        FontId::new(14.5, theme::medium()),
-        if active { theme::PAPER } else { theme::TEXT },
+        spaced.trim_end(),
+        FontId::new(9.0, theme::bold()),
+        theme::FAINT,
     );
-    ui.add_space(2.0);
+    ui.add_space(3.0);
+}
+
+/// The kit's .sp-item. The chosen row is filled with ink like the primary
+/// button, and carries a yellow shadow rather than an ink one.
+pub fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool) -> egui::Response {
+    sp_item(ui, icon, label, active, None)
+}
+
+fn sp_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool, badge: Option<String>) -> egui::Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
+    let p = ui.painter();
+    if active {
+        p.rect_filled(r.translate(vec2(3.0, 4.0)), 14.0, theme::AMBER);
+        p.rect_filled(r, 14.0, theme::INK);
+    } else if resp.hovered() {
+        p.rect_filled(r, 14.0, theme::PAPER);
+        p.rect_stroke(r, 14.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    }
+    let fg = if active { theme::PAPER } else { theme::TEXT };
+    draw_icon(p, icon, pos2(r.left() + 20.0, r.center().y), fg);
+    p.text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, label, FontId::new(13.0, theme::medium()), fg);
+    if let Some(n) = badge {
+        // .sp-badge: outlined in whatever the row's colour is, display face.
+        let galley = p.layout_no_wrap(n, FontId::new(11.0, theme::display()), fg);
+        let w = (galley.rect.width() + 14.0).max(22.0);
+        let br = Rect::from_center_size(pos2(r.right() - 12.0 - w / 2.0, r.center().y), vec2(w, 19.0));
+        p.rect_stroke(br, 9.0, Stroke::new(2.0, fg), egui::StrokeKind::Inside);
+        p.galley(pos2(br.center().x - galley.rect.width() / 2.0, br.center().y - galley.rect.height() / 2.0), galley, fg);
+    }
+    ui.add_space(4.0);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
