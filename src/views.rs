@@ -861,22 +861,52 @@ fn duration_text(minutes: f64) -> String {
 // ---------------------------------------------------------------------------
 // History
 
+/// The kit's segmented control: one track carrying one outline, with the
+/// chosen segment filled with ink like the primary button.
+///
+/// The segments have no border of their own. They used to be egui Buttons,
+/// which pick up the global ink stroke, so every segment was outlined inside
+/// an already outlined track and the whole thing read as clutter.
 pub fn pill_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, items: &[(T, &str)]) {
-    theme::soft(theme::SURFACE, 18, 2.5, 3).inner_margin(Margin::same(4)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            for (v, label) in items {
-                let active = *current == *v;
-                let btn = egui::Button::new(m(*label, 14.0, if active { theme::TEXT } else { Color32::from_rgb(0xC8, 0xC8, 0xC8) }))
-                    .fill(if active { Color32::from_rgb(0x1E, 0x1E, 0x1E) } else { Color32::TRANSPARENT })
-                    .corner_radius(14)
-                    .min_size(vec2(0.0, 28.0));
-                if ui.add(btn).clicked() {
-                    *current = *v;
-                }
-            }
-        });
-    });
+    const H: f32 = 38.0;
+    const PAD: f32 = 16.0;
+    const GAP: f32 = 4.0;
+    let font = FontId::new(12.0, theme::display());
+    let widths: Vec<f32> = items
+        .iter()
+        .map(|(_, l)| ui.painter().layout_no_wrap(l.to_uppercase(), font.clone(), theme::INK).rect.width() + PAD * 2.0)
+        .collect();
+    let inner: f32 = widths.iter().sum::<f32>() + GAP * items.len().saturating_sub(1) as f32;
+    let (slot, _) = ui.allocate_exact_size(vec2(inner + 8.0 + 3.0, H + 4.0), Sense::hover());
+    let track = Rect::from_min_size(slot.min, vec2(inner + 8.0, H));
+    let p = ui.painter();
+    p.rect_filled(track.translate(vec2(3.0, 4.0)), H / 2.0, theme::INK);
+    p.rect_filled(track, H / 2.0, theme::SURFACE);
+    p.rect_stroke(track, H / 2.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+
+    let mut x = track.left() + 4.0;
+    for ((v, label), w) in items.iter().zip(widths) {
+        let seg = Rect::from_min_size(pos2(x, track.top() + 4.0), vec2(w, H - 8.0));
+        let resp = ui.interact(seg, ui.id().with(("segment", *label)), Sense::click());
+        let on = *current == *v;
+        let p = ui.painter();
+        if on {
+            p.rect_filled(seg, (H - 8.0) / 2.0, theme::INK);
+        } else if resp.hovered() {
+            p.rect_filled(seg, (H - 8.0) / 2.0, theme::PAPER);
+        }
+        p.text(
+            seg.center(),
+            Align2::CENTER_CENTER,
+            label.to_uppercase(),
+            font.clone(),
+            if on { theme::PAPER } else { theme::TEXT },
+        );
+        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            *current = *v;
+        }
+        x += w + GAP;
+    }
 }
 
 enum RowAction {
