@@ -160,7 +160,12 @@ pub fn install(ctx: &egui::Context) {
     v.window_fill = Color32::from_rgb(0x34, 0x34, 0x34);
     v.extreme_bg_color = PAPER;
     v.override_text_color = Some(TEXT);
-    v.selection.bg_fill = ACCENT;
+    // Anything chosen is filled with ink and carries paper on it - the nav
+    // row, the segmented control, a choice card, and now a dropdown row and
+    // selected text. egui takes the text colour from selection.stroke, so
+    // both the highlight and what sits on it come from this one pair.
+    v.selection.bg_fill = INK;
+    v.selection.stroke = egui::Stroke::new(1.0, PAPER);
     v.hyperlink_color = ACCENT;
     // Controls carry the outline too. The kit presses a button by moving it
     // onto its own shadow, so pressed state is the ink fill with paper on top.
@@ -201,8 +206,8 @@ pub fn install(ctx: &egui::Context) {
     style.spacing.scroll.interact_handle_opacity = 0.9;
     style.spacing.scroll.dormant_background_opacity = 0.0;
     style.spacing.scroll.active_background_opacity = 0.0;
-    // The kit's slider is a plain track with an ink thumb; egui's trailing
-    // fill would paint it in the selection colour, which is the accent blue.
+    // The kit's slider is a plain track with an ink thumb, with nothing
+    // filled in behind it.
     style.visuals.slider_trailing_fill = false;
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.button_padding = egui::vec2(13.0, 7.0);
