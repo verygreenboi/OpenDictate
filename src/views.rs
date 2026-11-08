@@ -514,12 +514,15 @@ pub fn slider(
     }
     let t = ((*value - lo) / (hi - lo)).clamp(0.0, 1.0);
     let p = ui.painter();
-    p.rect_filled(track, 5.0, theme::SURFACE);
-    p.rect_stroke(track, 5.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    // .slider: 11px track, radius 7, 2.5px ink edge. The thumb is 19px at the
+    // same radius, filled with ink and bordered in ink - the kit's border is
+    // the same colour as the fill, so it reads as one solid rounded square.
+    // A paper ring here turned it into an outlined circle instead.
+    p.rect_filled(track, 7.0, theme::SURFACE);
+    p.rect_stroke(track, 7.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
     let thumb = Rect::from_center_size(pos2(track.left() + t * track.width(), track.center().y), vec2(19.0, 19.0));
     p.rect_filled(thumb.translate(vec2(2.0, 3.0)), 7.0, theme::INK);
     p.rect_filled(thumb, 7.0, theme::INK);
-    p.rect_stroke(thumb, 7.0, Stroke::new(2.5, theme::PAPER), egui::StrokeKind::Inside);
     let shown = if step >= 1.0 {
         format!("{:.0}{suffix}", *value)
     } else {
