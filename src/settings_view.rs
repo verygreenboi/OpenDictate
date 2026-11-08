@@ -366,15 +366,19 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(d("Settings", 24.0, theme::TEXT));
     section(ui, crate::icon::KEYBOARD, "Shortcuts");
-    ui.horizontal(|ui| {
-        let mut hold = app.s.hold_to_talk;
-        ui.selectable_value(&mut hold, false, "Press to start, press to stop");
-        ui.selectable_value(&mut hold, true, "Hold while speaking");
-        if hold != app.s.hold_to_talk {
-            app.s.hold_to_talk = hold;
-            app.changed();
-        }
-    });
+    // One choice of two, which is what the segmented control is for. As a
+    // pair of selectable labels the unchosen one looked like plain text and
+    // gave no sign it could be clicked.
+    let mut hold = app.s.hold_to_talk;
+    crate::views::pill_tabs(
+        ui,
+        &mut hold,
+        &[(false, "Press to start and stop"), (true, "Hold while speaking")],
+    );
+    if hold != app.s.hold_to_talk {
+        app.s.hold_to_talk = hold;
+        app.changed();
+    }
     ui.add_space(14.0);
     let mut keys_changed = false;
     for a in Action::ALL {
