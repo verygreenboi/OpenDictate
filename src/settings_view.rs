@@ -24,6 +24,52 @@ fn tab_header(tab: SettingsTab) -> (&'static str, &'static str) {
     }
 }
 
+/// Spoken language: what Whisper is told to listen for. It takes a code, so
+/// the label people read and the code it gets are kept together here rather
+/// than typed in by hand.
+const SPOKEN: [(&str, &str); 15] = [
+    ("auto", "Detect automatically"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("pt", "Portuguese"),
+    ("it", "Italian"),
+    ("yo", "Yoruba"),
+    ("ig", "Igbo"),
+    ("ha", "Hausa"),
+    ("zh", "Chinese"),
+    ("ja", "Japanese"),
+    ("ko", "Korean"),
+    ("ar", "Arabic"),
+    ("hi", "Hindi"),
+];
+
+fn spoken_label(code: &str) -> String {
+    SPOKEN
+        .iter()
+        .find(|(c, _)| *c == code)
+        .map(|(_, l)| (*l).to_string())
+        .unwrap_or_else(|| code.to_string())
+}
+
+fn spoken_picker(ui: &mut egui::Ui, code: &mut String, w: f32, salt: &str) -> bool {
+    let mut v = code.clone();
+    egui::ComboBox::from_id_salt(salt)
+        .width(w)
+        .selected_text(spoken_label(&v))
+        .show_ui(ui, |ui| {
+            for (c, label) in SPOKEN {
+                crate::views::combo_value(ui, &mut v, c.to_string(), label);
+            }
+        });
+    if v != *code {
+        *code = v;
+        return true;
+    }
+    false
+}
+
 pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     let size = vec2((screen.width() - 80.0).min(940.0), (screen.height() - 80.0).min(660.0));
@@ -263,8 +309,8 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             });
         }
     }
-    row(ui, "Spoken language", "\"auto\" detects it, or set a code like en, es, fr, yo.", 300.0, |ui| {
-        changed |= ui.add(egui::TextEdit::singleline(&mut app.s.language).desired_width(120.0)).changed();
+    row(ui, "Spoken language", "What to listen for. Detecting it works well for most people.", 300.0, |ui| {
+        changed |= spoken_picker(ui, &mut app.s.language, 300.0, "spoken-models");
     });
 
     section(ui, crate::icon::WAND, "Text clean-up");
@@ -490,8 +536,8 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             app.changed();
         }
     });
-    row(ui, "Spoken language", "\"auto\" to detect, or a code like en.", 204.0, |ui| {
-        if ui.add(egui::TextEdit::singleline(&mut app.s.language).desired_width(120.0)).changed() {
+    row(ui, "Spoken language", "What to listen for. Detecting it works well for most people.", 204.0, |ui| {
+        if spoken_picker(ui, &mut app.s.language, 204.0, "spoken-general") {
             app.changed();
         }
     });
