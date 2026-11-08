@@ -16,10 +16,10 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
         .exact_size(216.0)
         .resizable(false)
         .show_separator_line(false)
-        .frame(egui::Frame::new().fill(theme::BG).inner_margin(Margin { left: 10, right: 8, top: 10, bottom: 10 }))
+        .frame(egui::Frame::new().fill(theme::BG()).inner_margin(Margin { left: 10, right: 8, top: 10, bottom: 10 }))
         .show(ui, |ui| sidebar(app, ui));
 
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG)).show(ui, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG())).show(ui, |ui| {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             let full = ui.available_width();
             let width = (full - 80.0).clamp(560.0, 1080.0);
@@ -73,25 +73,25 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     // works, what does not, and what it is for; the detail lives in Models.
     let (fill, head, body, action) = if speech_ok {
         (
-            theme::Y1,
+            theme::Y1(),
             "ONE OPTIONAL EXTRA",
             "Dictation works. If you also want \"um\" and \"uh\" taken out and small slips tidied up, that needs one more download. Without it your words are pasted exactly as you said them.",
             "SET IT UP",
         )
     } else {
         (
-            theme::RED,
+            theme::RED(),
             "DICTATION ISN'T READY YET",
             "Your shortcut will not do anything yet. To turn what you say into text, Open Dictate needs a speech model downloaded onto this Mac.",
             "SET UP DICTATION",
         )
     };
-    let fg = theme::PAPER;
+    let fg = theme::PAPER();
     egui::Frame::new()
         .fill(fill)
         .stroke(Stroke::new(2.5, fg))
         .corner_radius(16)
-        .shadow(egui::epaint::Shadow { offset: [5, 6], blur: 0, spread: 0, color: theme::INK })
+        .shadow(egui::epaint::Shadow { offset: [5, 6], blur: 0, spread: 0, color: theme::INK() })
         .inner_margin(Margin { left: 14, right: 14, top: 11, bottom: 12 })
         .show(ui, |ui| {
             ui.set_width(w - 33.0);
@@ -165,9 +165,9 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     // the shadow has somewhere to fall inside the pane.
     let rect = ui.max_rect().shrink2(vec2(7.0, 10.0));
     let p = ui.painter();
-    p.rect_filled(rect.translate(vec2(5.0, 6.0)), 18.0, theme::INK);
-    p.rect_filled(rect, 18.0, theme::SURFACE);
-    p.rect_stroke(rect, 18.0, Stroke::new(3.0, theme::INK), egui::StrokeKind::Inside);
+    p.rect_filled(rect.translate(vec2(5.0, 6.0)), 18.0, theme::INK());
+    p.rect_filled(rect, 18.0, theme::SURFACE());
+    p.rect_stroke(rect, 18.0, Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
 
     let inner = rect.shrink2(vec2(10.0, 12.0));
     let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::top_down(Align::Min)));
@@ -178,7 +178,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         logo(ui);
         ui.add_space(4.0);
-        ui.label(d("OPEN DICTATE", 15.0, theme::TEXT));
+        ui.label(d("OPEN DICTATE", 15.0, theme::TEXT()));
     });
     ui.add_space(4.0);
 
@@ -202,7 +202,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
         }
         ui.add_space(8.0);
         let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
-        ui.painter().rect_filled(line, 0.0, theme::LINE);
+        ui.painter().rect_filled(line, 0.0, theme::LINE());
     });
 }
 
@@ -230,13 +230,13 @@ pub fn draw_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
 fn logo(ui: &mut egui::Ui) {
     let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
     let p = ui.painter();
-    p.rect_filled(r.translate(vec2(2.0, 3.0)), 9.0, theme::INK);
-    p.rect_filled(r, 9.0, theme::AMBER);
-    p.rect_stroke(r, 9.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    p.rect_filled(r.translate(vec2(2.0, 3.0)), 9.0, theme::INK());
+    p.rect_filled(r, 9.0, theme::AMBER());
+    p.rect_stroke(r, 9.0, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
     let c = r.center();
     for (i, h) in [8.0, 14.0, 10.0].iter().enumerate() {
         let x = c.x - 5.0 + i as f32 * 5.0;
-        p.rect_filled(Rect::from_center_size(pos2(x, c.y), vec2(3.0, *h)), 1.5, theme::PAPER);
+        p.rect_filled(Rect::from_center_size(pos2(x, c.y), vec2(3.0, *h)), 1.5, theme::PAPER());
     }
 }
 
@@ -358,20 +358,20 @@ fn kit_toggle(ui: &mut egui::Ui, on: bool, round: bool) -> egui::Response {
     let p = ui.painter();
     if on {
         let b = b.translate(vec2(2.0, 3.0));
-        p.rect_filled(b, radius, theme::INK);
+        p.rect_filled(b, radius, theme::INK());
         let c = b.center();
         if round {
-            p.circle_filled(c, 4.5, theme::PAPER);
+            p.circle_filled(c, 4.5, theme::PAPER());
         } else {
             p.add(egui::Shape::line(
                 vec![pos2(c.x - 4.6, c.y - 0.2), pos2(c.x - 1.4, c.y + 3.2), pos2(c.x + 4.8, c.y - 3.8)],
-                Stroke::new(2.6, theme::PAPER),
+                Stroke::new(2.6, theme::PAPER()),
             ));
         }
     } else {
-        p.rect_filled(b.translate(vec2(2.0, 3.0)), radius, theme::INK);
-        p.rect_filled(b, radius, if resp.hovered() { theme::PAPER } else { theme::SURFACE });
-        p.rect_stroke(b, radius, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+        p.rect_filled(b.translate(vec2(2.0, 3.0)), radius, theme::INK());
+        p.rect_filled(b, radius, if resp.hovered() { theme::PAPER() } else { theme::SURFACE() });
+        p.rect_stroke(b, radius, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -390,7 +390,7 @@ pub fn kit_radio<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, value:
         let on = *current == value;
         let mut r = kit_toggle(ui, on, true);
         ui.add_space(3.0);
-        let lr = ui.label(m(label, 13.0, theme::TEXT)).interact(Sense::click());
+        let lr = ui.label(m(label, 13.0, theme::TEXT())).interact(Sense::click());
         if lr.clicked() || r.clicked() {
             *current = value;
             r.mark_changed();
@@ -430,9 +430,9 @@ pub enum State {
 
 pub fn status(ui: &mut egui::Ui, state: State, text: impl Into<String>) {
     let (tint, glyph) = match state {
-        State::Ok => (theme::GREEN, "check"),
-        State::Warn => (theme::AMBER, "bell"),
-        State::Bad => (theme::RED, "x"),
+        State::Ok => (theme::GREEN(), "check"),
+        State::Warn => (theme::AMBER(), "bell"),
+        State::Bad => (theme::RED(), "x"),
     };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 7.0;
@@ -450,26 +450,26 @@ pub fn progress(ui: &mut egui::Ui, caption: &str, figure: &str, frac: f32, w: f3
             let (r, _) = ui.allocate_exact_size(vec2(w, 12.0), Sense::hover());
             let p = ui.painter();
             let spaced: String = caption.to_uppercase().chars().flat_map(|c| [c, ' ']).collect();
-            p.text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, spaced.trim_end(), FontId::new(9.0, theme::bold()), theme::FAINT);
-            p.text(pos2(r.right(), r.center().y), Align2::RIGHT_CENTER, figure, FontId::new(12.0, theme::display()), theme::TEXT);
+            p.text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, spaced.trim_end(), FontId::new(9.0, theme::bold()), theme::FAINT());
+            p.text(pos2(r.right(), r.center().y), Align2::RIGHT_CENTER, figure, FontId::new(12.0, theme::display()), theme::TEXT());
         });
         let (r, _) = ui.allocate_exact_size(vec2(w, 11.0), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * frac.clamp(0.0, 1.0), r.height())), 5.0, theme::INK);
-        p.rect_stroke(r, 5.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+        p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * frac.clamp(0.0, 1.0), r.height())), 5.0, theme::INK());
+        p.rect_stroke(r, 5.0, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
     });
 }
 
 /// The kit's .link: ink, underlined, thicker when pointed at.
 pub fn link(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let font = FontId::new(12.5, theme::medium());
-    let g = ui.painter().layout_no_wrap(text.to_string(), font.clone(), theme::TEXT);
+    let g = ui.painter().layout_no_wrap(text.to_string(), font.clone(), theme::TEXT());
     let (r, resp) = ui.allocate_exact_size(vec2(g.rect.width(), g.rect.height() + 6.0), Sense::click());
     let p = ui.painter();
-    p.text(pos2(r.left(), r.top()), Align2::LEFT_TOP, text, font, theme::TEXT);
+    p.text(pos2(r.left(), r.top()), Align2::LEFT_TOP, text, font, theme::TEXT());
     let t = if resp.hovered() { 3.0 } else { 2.0 };
     let y = r.top() + g.rect.height() + 1.0;
-    p.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(t, theme::TEXT));
+    p.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(t, theme::TEXT()));
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -481,21 +481,21 @@ pub fn link(ui: &mut egui::Ui, text: &str) -> egui::Response {
 /// does: ink underneath, paper on top.
 pub fn combo_item(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
     let font = FontId::new(13.0, theme::medium());
-    let g = ui.painter().layout_no_wrap(label.to_string(), font.clone(), theme::TEXT);
+    let g = ui.painter().layout_no_wrap(label.to_string(), font.clone(), theme::TEXT());
     let h = (g.rect.height() + 13.0).max(30.0);
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
     let p = ui.painter();
     if selected {
-        p.rect_filled(r, 9.0, theme::INK);
+        p.rect_filled(r, 9.0, theme::INK());
     } else if resp.hovered() {
-        p.rect_filled(r, 9.0, theme::PAPER);
+        p.rect_filled(r, 9.0, theme::PAPER());
     }
     p.text(
         pos2(r.left() + 10.0, r.center().y),
         Align2::LEFT_CENTER,
         label,
         font,
-        if selected { theme::PAPER } else { theme::TEXT },
+        if selected { theme::PAPER() } else { theme::TEXT() },
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -545,17 +545,17 @@ pub fn slider(
     // same radius, filled with ink and bordered in ink - the kit's border is
     // the same colour as the fill, so it reads as one solid rounded square.
     // A paper ring here turned it into an outlined circle instead.
-    p.rect_filled(track, 7.0, theme::SURFACE);
-    p.rect_stroke(track, 7.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    p.rect_filled(track, 7.0, theme::SURFACE());
+    p.rect_stroke(track, 7.0, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
     let thumb = Rect::from_center_size(pos2(track.left() + t * track.width(), track.center().y), vec2(19.0, 19.0));
-    p.rect_filled(thumb.translate(vec2(2.0, 3.0)), 7.0, theme::INK);
-    p.rect_filled(thumb, 7.0, theme::INK);
+    p.rect_filled(thumb.translate(vec2(2.0, 3.0)), 7.0, theme::INK());
+    p.rect_filled(thumb, 7.0, theme::INK());
     let shown = if step >= 1.0 {
         format!("{:.0}{suffix}", *value)
     } else {
         format!("{:.2}{suffix}", *value)
     };
-    p.text(pos2(slot.right(), slot.center().y), Align2::RIGHT_CENTER, shown, FontId::new(13.0, theme::display()), theme::TEXT);
+    p.text(pos2(slot.right(), slot.center().y), Align2::RIGHT_CENTER, shown, FontId::new(13.0, theme::display()), theme::TEXT());
     resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
 }
 
@@ -567,18 +567,18 @@ pub fn slider(
 /// fill, and egui takes button text from the global override.
 pub fn btn(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let font = FontId::new(13.5, theme::bold());
-    let g = ui.painter().layout_no_wrap(label.to_string(), font.clone(), theme::INK);
+    let g = ui.painter().layout_no_wrap(label.to_string(), font.clone(), theme::INK());
     let (r, resp) = ui.allocate_exact_size(vec2(g.rect.width() + 26.0, g.rect.height() + 15.0), Sense::click());
     let hot = resp.hovered();
     let p = ui.painter();
-    p.rect_filled(r, 11.0, if hot { theme::INK } else { theme::SURFACE });
+    p.rect_filled(r, 11.0, if hot { theme::INK() } else { theme::SURFACE() });
     p.rect_stroke(
         r,
         11.0,
-        Stroke::new(2.5, if hot { theme::PAPER } else { theme::INK }),
+        Stroke::new(2.5, if hot { theme::PAPER() } else { theme::INK() }),
         egui::StrokeKind::Inside,
     );
-    p.text(r.center(), Align2::CENTER_CENTER, label, font, if hot { theme::PAPER } else { theme::INK });
+    p.text(r.center(), Align2::CENTER_CENTER, label, font, if hot { theme::PAPER() } else { theme::INK() });
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -592,7 +592,7 @@ fn sp_cap(ui: &mut egui::Ui, text: &str) {
         Align2::LEFT_CENTER,
         spaced.trim_end(),
         FontId::new(9.0, theme::bold()),
-        theme::FAINT,
+        theme::FAINT(),
     );
     ui.add_space(3.0);
 }
@@ -607,13 +607,13 @@ fn sp_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool, badge: Opti
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
     let p = ui.painter();
     if active {
-        p.rect_filled(r.translate(vec2(3.0, 4.0)), 14.0, theme::AMBER);
-        p.rect_filled(r, 14.0, theme::INK);
+        p.rect_filled(r.translate(vec2(3.0, 4.0)), 14.0, theme::AMBER());
+        p.rect_filled(r, 14.0, theme::INK());
     } else if resp.hovered() {
-        p.rect_filled(r, 14.0, theme::PAPER);
-        p.rect_stroke(r, 14.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+        p.rect_filled(r, 14.0, theme::PAPER());
+        p.rect_stroke(r, 14.0, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
     }
-    let fg = if active { theme::PAPER } else { theme::TEXT };
+    let fg = if active { theme::PAPER() } else { theme::TEXT() };
     kit_icon(p, icon, pos2(r.left() + 20.0, r.center().y), fg);
     p.text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, label, FontId::new(13.0, theme::medium()), fg);
     if let Some(n) = badge {
@@ -632,8 +632,8 @@ fn status_line(ui: &mut egui::Ui, dot: Color32, what: &str, label: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
         ui.painter().circle_filled(r.center(), 3.5, dot);
-        ui.label(b(what, 12.5, theme::TEXT));
-        ui.add(egui::Label::new(t(label, 12.5, theme::MUTED)).truncate());
+        ui.label(b(what, 12.5, theme::TEXT()));
+        ui.add(egui::Label::new(t(label, 12.5, theme::MUTED())).truncate());
     });
 }
 
@@ -663,7 +663,7 @@ pub fn kit_button_on(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32, on: 
     let font = FontId::new(15.0, theme::display());
     let text = label.to_uppercase();
     let pad = if kind == Btn::Primary { 32.0 } else { 22.0 };
-    let measured = ui.painter().layout_no_wrap(text.clone(), font.clone(), theme::INK).rect.width();
+    let measured = ui.painter().layout_no_wrap(text.clone(), font.clone(), theme::INK()).rect.width();
     let w = (measured + pad * 2.0).max(min_w);
     let sense = if on { Sense::click() } else { Sense::hover() };
     let (slot, resp) = ui.allocate_exact_size(vec2(w + 5.0, 50.0), sense);
@@ -681,14 +681,14 @@ pub fn kit_button_on(ui: &mut egui::Ui, label: &str, kind: Btn, min_w: f32, on: 
     // Primary is ink already; secondary turns into it on hover.
     let inked = kind == Btn::Primary || (on && resp.hovered());
     let (fill, fg, edge) = if inked {
-        (theme::INK, theme::PAPER, theme::PAPER)
+        (theme::INK(), theme::PAPER(), theme::PAPER())
     } else {
-        (theme::SURFACE, theme::INK, theme::INK)
+        (theme::SURFACE(), theme::INK(), theme::INK())
     };
     let (fill, edge) = if on { (fill, edge) } else { (fill.gamma_multiply(0.38), edge.gamma_multiply(0.38)) };
     let p = ui.painter();
     if lift > 0.0 {
-        p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 16.0, theme::INK);
+        p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 16.0, theme::INK());
     }
     p.rect_filled(r, 16.0, fill);
     p.rect_stroke(r, 16.0, Stroke::new(3.0, edge), egui::StrokeKind::Inside);
@@ -719,11 +719,11 @@ pub fn icon_button(ui: &mut egui::Ui, icon: &str, tip: &str) -> egui::Response {
     let r = base.translate(shift);
     let p = ui.painter();
     if lift > 0.0 {
-        p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 9.0, theme::INK);
+        p.rect_filled(r.translate(vec2(lift, lift + 1.0)), 9.0, theme::INK());
     }
-    p.rect_filled(r, 9.0, if down { theme::INK } else { theme::SURFACE });
-    p.rect_stroke(r, 9.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
-    kit_icon(p, icon, r.center(), if down { theme::PAPER } else { theme::INK });
+    p.rect_filled(r, 9.0, if down { theme::INK() } else { theme::SURFACE() });
+    p.rect_stroke(r, 9.0, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
+    kit_icon(p, icon, r.center(), if down { theme::PAPER() } else { theme::INK() });
     resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -740,7 +740,7 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.set_width(main_w);
             setup_notice(app, ui, main_w);
-            ui.label(d("Say it, skip the typing", 46.0, theme::TEXT));
+            ui.label(d("Say it, skip the typing", 46.0, theme::TEXT()));
             ui.add_space(20.0);
             ui.horizontal(|ui| {
                 start_button(app, ui, 196.0);
@@ -752,7 +752,7 @@ fn home(app: &mut DictateApp, ui: &mut egui::Ui, width: f32) {
                     // row is 50pt tall because of the button, so the hint
                     // gets a row of the rail's height instead.
                     ui.allocate_ui_with_layout(vec2(220.0, 30.0), Layout::left_to_right(Align::Center), |ui| {
-                        ui.label(t("or press", 13.5, theme::MUTED));
+                        ui.label(t("or press", 13.5, theme::MUTED()));
                         ui.add_space(2.0);
                         kbd(ui, k);
                     });
@@ -780,7 +780,7 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     let mut share = false;
     ui.horizontal(|ui| {
         ui.add_space(0.0);
-        ui.label(d("Insights", 24.0, theme::MUTED));
+        ui.label(d("Insights", 24.0, theme::MUTED()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             share = kit_button(ui, &format!("{}  Share", crate::icon::SHARE), Btn::Secondary, 0.0).clicked();
         });
@@ -822,7 +822,7 @@ fn insights(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
     personalization_card(app, ui, w);
 
     let rect = Rect::from_min_max(pos2(left - 12.0, top - 12.0), pos2(left + w + 12.0, ui.cursor().top() + 4.0));
-    let mut shapes = vec![egui::Shape::rect_filled(rect, 14.0, theme::PAPER)];
+    let mut shapes = vec![egui::Shape::rect_filled(rect, 14.0, theme::PAPER())];
     let mut y = rect.top() + 4.0;
     while y < rect.bottom() - 2.0 {
         let mut x = rect.left() + 4.0;
@@ -843,12 +843,12 @@ fn stat_card(ui: &mut egui::Ui, w: f32, parts: &[(String, &str)], label: &str) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 for (v, unit) in parts {
-                    ui.label(d(v.clone(), 25.0, theme::TEXT));
-                    ui.label(b(*unit, 12.5, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
+                    ui.label(d(v.clone(), 25.0, theme::TEXT()));
+                    ui.label(b(*unit, 12.5, theme::MUTED()));
                     ui.add_space(2.0);
                 }
             });
-            ui.label(t(label, 14.0, theme::MUTED));
+            ui.label(t(label, 14.0, theme::MUTED()));
         });
     });
 }
@@ -865,10 +865,10 @@ fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     ui.set_width(col);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        ui.label(d(n.to_string(), 23.0, theme::TEXT));
-                        ui.label(b(if n == 1 { "day" } else { "days" }, 12.5, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
+                        ui.label(d(n.to_string(), 23.0, theme::TEXT()));
+                        ui.label(b(if n == 1 { "day" } else { "days" }, 12.5, theme::MUTED()));
                     });
-                    ui.label(t(label, 13.0, theme::MUTED));
+                    ui.label(t(label, 13.0, theme::MUTED()));
                 });
             }
         });
@@ -888,9 +888,9 @@ fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         let (r, _) = ui.allocate_exact_size(vec2(w - 32.0, 7.0 * 22.0 + 14.0), Sense::hover());
         let p = ui.painter();
         for (i, d) in ["S", "M", "T", "W", "T", "F", "S"].iter().enumerate() {
-            p.text(pos2(r.left() + 4.0, r.top() + i as f32 * 22.0 + cell / 2.0), Align2::CENTER_CENTER, d, FontId::proportional(9.0), theme::MUTED);
+            p.text(pos2(r.left() + 4.0, r.top() + i as f32 * 22.0 + cell / 2.0), Align2::CENTER_CENTER, d, FontId::proportional(9.0), theme::MUTED());
         }
-        let hatch = Stroke::new(1.0, Color32::from_rgb(0x3E, 0x3E, 0x3E));
+        let hatch = Stroke::new(1.0, theme::LINE());
         let mut last_month = 0;
         for wk in 0..weeks {
             let x = r.left() + label_w + wk as f32 * (cell + gapx);
@@ -898,23 +898,23 @@ fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                 let d = start + Duration::days(wk * 7 + dow);
                 let cr = Rect::from_min_size(pos2(x, r.top() + dow as f32 * 22.0), vec2(cell, cell));
                 if d > today {
-                    p.rect_stroke(cr, 3.0, Stroke::new(1.0, Color32::from_rgb(0x44, 0x44, 0x44)), StrokeKind::Inside);
+                    p.rect_stroke(cr, 3.0, Stroke::new(1.0, theme::LINE()), StrokeKind::Inside);
                 } else if d < first {
                     // Before the first dictation: striped, like the original.
-                    p.rect_filled(cr, 3.0, Color32::from_rgb(0x31, 0x31, 0x31));
+                    p.rect_filled(cr, 3.0, theme::TRACK());
                     for k in [4.0, 9.0, 14.0] {
                         p.line_segment([pos2(cr.left() + k - 4.0, cr.bottom() - 1.0), pos2(cr.left() + k + 1.0, cr.top() + 1.0)], hatch);
                     }
                 } else {
                     let n = s.count_on(d);
-                    let c = if n == 0 { Color32::from_rgb(0x45, 0x45, 0x45) } else { theme::HEAT[((n as f32 / busiest as f32) * 3.99) as usize] };
+                    let c = if n == 0 { theme::TRACK() } else { theme::HEAT()[((n as f32 / busiest as f32) * 3.99) as usize] };
                     p.rect_filled(cr, 3.0, c);
                 }
             }
             let d = start + Duration::days(wk * 7);
             if d.month() != last_month {
                 if wk > 0 {
-                    p.text(pos2(x + cell / 2.0, r.bottom() - 4.0), Align2::CENTER_CENTER, d.format("%b").to_string(), FontId::proportional(9.0), theme::MUTED);
+                    p.text(pos2(x + cell / 2.0, r.bottom() - 4.0), Align2::CENTER_CENTER, d.format("%b").to_string(), FontId::proportional(9.0), theme::MUTED());
                 }
                 last_month = d.month();
             }
@@ -922,12 +922,12 @@ fn activity_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(t("Less", 12.0, theme::MUTED));
-            for c in theme::HEAT {
+            ui.label(t("Less", 12.0, theme::MUTED()));
+            for c in theme::HEAT() {
                 let (r, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
                 ui.painter().rect_filled(r, 2.0, c);
             }
-            ui.label(t("More", 12.0, theme::MUTED));
+            ui.label(t("More", 12.0, theme::MUTED()));
         });
     });
 }
@@ -941,12 +941,12 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let (r, _) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::hover());
-            ui.painter().rect_filled(r, 5.0, Color32::from_rgb(0x48, 0x48, 0x48));
-            draw_icon(ui.painter(), "spark", r.center(), theme::MUTED);
-            ui.label(d(words.to_string(), 25.0, theme::TEXT));
-            ui.label(b(if words == 1 { "word" } else { "words" }, 12.5, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
+            ui.painter().rect_filled(r, 5.0, theme::TRACK());
+            draw_icon(ui.painter(), "spark", r.center(), theme::MUTED());
+            ui.label(d(words.to_string(), 25.0, theme::TEXT()));
+            ui.label(b(if words == 1 { "word" } else { "words" }, 12.5, theme::MUTED()));
         });
-        ui.label(t(format!("Personalization · {} tone", app.s.tone.label()), 14.0, theme::MUTED));
+        ui.label(t(format!("Personalization · {} tone", app.s.tone.label()), 14.0, theme::MUTED()));
         ui.add_space(10.0);
         if btn(ui, "Personalize").clicked() {
             app.settings_tab = Some(SettingsTab::Personalization);
@@ -954,18 +954,18 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         // Radar-style circle with one dot per dictionary word.
         let c = pos2(top.left() + w - 32.0 - 100.0, top.top() + 105.0);
         let p = ui.painter();
-        p.circle_filled(c, 100.0, Color32::from_rgb(0x40, 0x40, 0x40));
+        p.circle_filled(c, 100.0, theme::TRACK());
         for k in 0..5 {
             let a = k as f32 / 5.0 * std::f32::consts::TAU - 1.2;
-            p.line_segment([c, c + vec2(a.cos(), a.sin()) * 100.0], Stroke::new(1.0, Color32::from_rgb(0x4A, 0x4A, 0x4A)));
+            p.line_segment([c, c + vec2(a.cos(), a.sin()) * 100.0], Stroke::new(1.0, theme::LINE()));
         }
         for (i, wd) in app.s.dictionary.iter().enumerate().take(60) {
             let a = i as f32 * 2.399;
             let rad = 18.0 + (i as f32 * 13.0) % 74.0;
-            p.circle_filled(c + vec2(a.cos(), a.sin()) * rad, 2.5, if wd.auto { theme::GREEN } else { theme::HEAT[3] });
+            p.circle_filled(c + vec2(a.cos(), a.sin()) * rad, 2.5, if wd.auto { theme::GREEN() } else { theme::HEAT()[3] });
         }
-        p.circle_filled(c, 6.0, theme::HEAT[3]);
-        p.circle_stroke(c, 7.5, Stroke::new(1.0, Color32::from_rgb(0x9C, 0xB4, 0xFF)));
+        p.circle_filled(c, 6.0, theme::HEAT()[3]);
+        p.circle_stroke(c, 7.5, Stroke::new(1.0, theme::ACCENT()));
     });
 }
 
@@ -993,14 +993,14 @@ fn start_button(app: &mut DictateApp, ui: &mut egui::Ui, min_w: f32) {
 }
 
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
-    theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
+    theme::soft(theme::CARD_DIM(), 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
         for (i, a) in Action::ALL.iter().enumerate() {
-            ui.label(t(a.label(), 12.5, Color32::from_rgb(0xD8, 0xD8, 0xD8)));
+            ui.label(t(a.label(), 12.5, theme::MUTED()));
             ui.horizontal_wrapped(|ui| {
                 let keys = app.s.keys(*a);
                 if keys.is_empty() {
-                    ui.label(t("Not set", 12.0, theme::FAINT));
+                    ui.label(t("Not set", 12.0, theme::FAINT()));
                 }
                 for k in keys.iter().take(2) {
                     kbd(ui, k);
@@ -1019,31 +1019,31 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     // Models, where all of it lives; the chevron says so.
     let (speech_ok, speech) = app.speech_ready();
     let (text_ok, text) = app.text_ready();
-    let card = theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
+    let card = theme::soft(theme::CARD_DIM(), 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
         ui.set_width(186.0 - 24.0);
         ui.horizontal(|ui| {
             let all_ok = speech_ok && text_ok;
             let (r, _) = ui.allocate_exact_size(vec2(17.0, 17.0), Sense::hover());
             kit_icon_at(ui.painter(), if all_ok { "check" } else { "x" }, r.center(),
-                        if all_ok { theme::GREEN } else if speech_ok { theme::AMBER } else { theme::RED }, 16.0);
+                        if all_ok { theme::GREEN() } else if speech_ok { theme::AMBER() } else { theme::RED() }, 16.0);
             ui.add_space(3.0);
-            ui.label(b(if speech_ok { "Ready" } else { "Not ready" }, 16.0, theme::TEXT));
+            ui.label(b(if speech_ok { "Ready" } else { "Not ready" }, 16.0, theme::TEXT()));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(13.0, 13.0), Sense::hover());
-                kit_icon(ui.painter(), "chev", r.center(), theme::FAINT);
+                kit_icon(ui.painter(), "chev", r.center(), theme::FAINT());
             });
         });
         ui.add_space(4.0);
         // A tick is a stronger claim than a dot: it says set up, not present.
         // Speech is required, so a gap there is wrong; text clean-up is
         // optional, so a gap there has only been noticed.
-        for (ok, name, missing) in [(speech_ok, speech, theme::RED), (text_ok, text, theme::AMBER)] {
+        for (ok, name, missing) in [(speech_ok, speech, theme::RED()), (text_ok, text, theme::AMBER())] {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(14.0, 18.0), Sense::hover());
                 kit_icon_at(ui.painter(), if ok { "check" } else { "x" }, r.center(),
-                            if ok { theme::GREEN } else { missing }, 13.0);
+                            if ok { theme::GREEN() } else { missing }, 13.0);
                 ui.add_space(2.0);
-                ui.add(egui::Label::new(t(name, 13.0, theme::MUTED)).truncate());
+                ui.add(egui::Label::new(t(name, 13.0, theme::MUTED())).truncate());
             });
         }
     });
@@ -1055,10 +1055,10 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 pub fn kbd(ui: &mut egui::Ui, k: &str) {
-    theme::soft(theme::SURFACE, 14, 2.5, 3)
+    theme::soft(theme::SURFACE(), 14, 2.5, 3)
         .corner_radius(5)
         .inner_margin(Margin::symmetric(6, 2))
-        .show(ui, |ui| ui.label(b(pretty_key(k), 13.0, theme::TEXT)));
+        .show(ui, |ui| ui.label(b(pretty_key(k), 13.0, theme::TEXT())));
 }
 
 pub fn pretty_key(k: &str) -> String {
@@ -1110,15 +1110,15 @@ pub fn pill_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, items:
     let font = FontId::new(12.0, theme::display());
     let widths: Vec<f32> = items
         .iter()
-        .map(|(_, l)| ui.painter().layout_no_wrap(l.to_uppercase(), font.clone(), theme::INK).rect.width() + PAD * 2.0)
+        .map(|(_, l)| ui.painter().layout_no_wrap(l.to_uppercase(), font.clone(), theme::INK()).rect.width() + PAD * 2.0)
         .collect();
     let inner: f32 = widths.iter().sum::<f32>() + GAP * items.len().saturating_sub(1) as f32;
     let (slot, _) = ui.allocate_exact_size(vec2(inner + 8.0 + 3.0, H + 4.0), Sense::hover());
     let track = Rect::from_min_size(slot.min, vec2(inner + 8.0, H));
     let p = ui.painter();
-    p.rect_filled(track.translate(vec2(3.0, 4.0)), H / 2.0, theme::INK);
-    p.rect_filled(track, H / 2.0, theme::SURFACE);
-    p.rect_stroke(track, H / 2.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    p.rect_filled(track.translate(vec2(3.0, 4.0)), H / 2.0, theme::INK());
+    p.rect_filled(track, H / 2.0, theme::SURFACE());
+    p.rect_stroke(track, H / 2.0, Stroke::new(2.5, theme::INK()), egui::StrokeKind::Inside);
 
     let mut x = track.left() + 4.0;
     for ((v, label), w) in items.iter().zip(widths) {
@@ -1127,16 +1127,16 @@ pub fn pill_tabs<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, items:
         let on = *current == *v;
         let p = ui.painter();
         if on {
-            p.rect_filled(seg, (H - 8.0) / 2.0, theme::INK);
+            p.rect_filled(seg, (H - 8.0) / 2.0, theme::INK());
         } else if resp.hovered() {
-            p.rect_filled(seg, (H - 8.0) / 2.0, theme::PAPER);
+            p.rect_filled(seg, (H - 8.0) / 2.0, theme::PAPER());
         }
         p.text(
             seg.center(),
             Align2::CENTER_CENTER,
             label.to_uppercase(),
             font.clone(),
-            if on { theme::PAPER } else { theme::TEXT },
+            if on { theme::PAPER() } else { theme::TEXT() },
         );
         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             *current = *v;
@@ -1154,7 +1154,7 @@ enum RowAction {
 
 fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.label(b("History", 38.0, theme::TEXT));
+        ui.label(b("History", 38.0, theme::TEXT()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let more = icon_button(ui, "more", "More");
             egui::Popup::menu(&more).show(|ui| {
@@ -1163,25 +1163,25 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
                     ui.ctx().copy_text(all);
                     ui.close();
                 }
-                if ui.button(t("Clear all history", 14.0, theme::RED)).clicked() {
+                if ui.button(t("Clear all history", 14.0, theme::RED())).clicked() {
                     app.clear_history();
                     ui.close();
                 }
             });
-            ui.label(t(format!("{} Stored only on this Mac", crate::icon::LOCK), 14.0, Color32::from_rgb(0xD0, 0xD0, 0xD0)));
+            ui.label(t(format!("{} Stored only on this Mac", crate::icon::LOCK), 14.0, theme::MUTED()));
         });
     });
     ui.add_space(10.0);
-    theme::soft(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::symmetric(12, 12)).show(ui, |ui| {
+    theme::soft(theme::PANEL(), 10, 2.0, 2).inner_margin(Margin::symmetric(12, 12)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
-                ui.label(m(format!("{} Keep history", crate::icon::ARCHIVE), 14.0, theme::TEXT));
-                ui.label(t("Choose how long to keep your history on this device.", 14.0, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
+                ui.label(m(format!("{} Keep history", crate::icon::ARCHIVE), 14.0, theme::TEXT()));
+                ui.label(t("Choose how long to keep your history on this device.", 14.0, theme::MUTED()));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let mut k = app.s.keep_history;
-                egui::ComboBox::from_id_salt("keep").width(140.0).selected_text(m(k.label(), 14.0, theme::TEXT)).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("keep").width(140.0).selected_text(m(k.label(), 14.0, theme::TEXT())).show_ui(ui, |ui| {
                     for o in KeepHistory::ALL {
                         combo_value(ui, &mut k, o, o.label());
                     }
@@ -1193,13 +1193,13 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         });
         ui.add_space(6.0);
         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-        ui.painter().rect_filled(r, 0.0, theme::LINE);
+        ui.painter().rect_filled(r, 0.0, theme::LINE());
         ui.add_space(6.0);
-        ui.label(m(format!("{} Your data stays yours", crate::icon::LOCK), 14.0, theme::TEXT));
+        ui.label(m(format!("{} Your data stays yours", crate::icon::LOCK), 14.0, theme::TEXT()));
         ui.label(para(
             "Recordings and text are kept only on this Mac. Your voice goes only to the speech and text models you chose in Models.",
             14.0,
-            Color32::from_rgb(0xC8, 0xC8, 0xC8),
+            theme::MUTED(),
         ));
     });
     ui.add_space(14.0);
@@ -1215,8 +1215,8 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
         ui.add_space(30.0);
         let key = app.s.dictate_keys.first().map(|k| pretty_key(k)).unwrap_or_else(|| "your shortcut".into());
         ui.vertical_centered(|ui| {
-            ui.label(m("Nothing here yet", 18.0, theme::TEXT));
-            ui.label(t(format!("Press {key} anywhere, speak, and your words show up here."), 14.0, theme::MUTED));
+            ui.label(m("Nothing here yet", 18.0, theme::TEXT()));
+            ui.label(t(format!("Press {key} anywhere, speak, and your words show up here."), 14.0, theme::MUTED()));
         });
         return;
     }
@@ -1226,16 +1226,16 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
     let mut i = 0;
     while i < items.len() {
         let day = stats::local_date(items[i].when);
-        ui.label(t(stats::day_heading(day), 13.0, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
+        ui.label(t(stats::day_heading(day), 13.0, theme::MUTED()));
         ui.add_space(2.0);
-        theme::soft(theme::SURFACE, 12, 2.0, 2).show(ui, |ui| {
+        theme::soft(theme::SURFACE(), 12, 2.0, 2).show(ui, |ui| {
             ui.set_width(ui.available_width());
             let mut first = true;
             while i < items.len() && stats::local_date(items[i].when) == day {
                 let e = &items[i];
                 if !first {
                     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-                    ui.painter().rect_filled(r, 0.0, Color32::from_rgb(0x30, 0x30, 0x30));
+                    ui.painter().rect_filled(r, 0.0, theme::TRACK());
                 }
                 first = false;
                 if let Some(a) = history_row(app, ui, e) {
@@ -1264,13 +1264,13 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
     egui::Frame::new().inner_margin(Margin { left: 12, right: 12, top: 10, bottom: 10 }).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal_top(|ui| {
-            ui.add_sized(vec2(58.0, 18.0), egui::Label::new(t(stats::clock(e.when), 12.5, theme::MUTED)));
+            ui.add_sized(vec2(58.0, 18.0), egui::Label::new(t(stats::clock(e.when), 12.5, theme::MUTED())));
             let right_w = 150.0;
             let text_w = ui.available_width() - right_w;
             ui.vertical(|ui| {
                 ui.set_width(text_w);
                 if let Some(err) = &e.error {
-                    ui.label(t(format!("{err}  {}", crate::icon::INFO), 14.0, Color32::from_rgb(0xB8, 0xB8, 0xB8)))
+                    ui.label(t(format!("{err}  {}", crate::icon::INFO), 14.0, theme::MUTED()))
                         .on_hover_text(format!("{} · {:.1}s recording", e.action.label(), e.seconds));
                 } else if let Some((_, text)) = app.editing.as_mut().filter(|(w, _)| *w == e.when) {
                     ui.add(egui::TextEdit::multiline(text).desired_width(text_w).desired_rows(3));
@@ -1286,20 +1286,20 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                     match e.action {
                         Action::Dictate => {}
                         Action::Translate => {
-                            ui.label(t("Translated", 11.5, theme::HEAT[3]));
+                            ui.label(t("Translated", 11.5, theme::HEAT()[3]));
                         }
                         Action::Ask => {
-                            ui.label(t("Ask anything", 11.5, theme::HEAT[3]));
+                            ui.label(t("Ask anything", 11.5, theme::HEAT()[3]));
                         }
                     }
-                    ui.label(para(&e.text, 14.0, theme::TEXT));
+                    ui.label(para(&e.text, 14.0, theme::TEXT()));
                     if app.expanded == Some(e.when) {
                         ui.add_space(4.0);
                         if !e.selection.is_empty() {
-                            ui.label(t(format!("Selected text: {}", e.selection), 12.5, theme::MUTED));
+                            ui.label(t(format!("Selected text: {}", e.selection), 12.5, theme::MUTED()));
                         }
-                        ui.label(t(format!("Heard: {}", e.raw), 12.5, theme::MUTED));
-                        ui.label(t(format!("{:.1}s · speech: {} · text: {}", e.seconds, e.speech_model, e.text_model), 12.0, theme::FAINT));
+                        ui.label(t(format!("Heard: {}", e.raw), 12.5, theme::MUTED()));
+                        ui.label(t(format!("{:.1}s · speech: {} · text: {}", e.seconds, e.speech_model, e.text_model), 12.0, theme::FAINT()));
                     }
                 }
             });
@@ -1324,14 +1324,16 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                             ui.close();
                         }
                     }
-                    if ui.button(t("Delete", 14.0, theme::RED)).clicked() {
+                    if ui.button(t("Delete", 14.0, theme::RED())).clicked() {
                         out = Some(RowAction::Delete);
                         ui.close();
                     }
                 });
                 if e.error.is_some() && e.audio.is_some() {
-                    let btn = egui::Button::new(m(format!("{} Retry", crate::icon::ROTATE), 14.0, theme::TEXT)).fill(Color32::from_rgb(0x44, 0x44, 0x44)).corner_radius(6);
-                    if ui.add_enabled(app.busy.is_none(), btn).clicked() {
+                    // The last button with a fill of its own. It needs a
+                    // disabled state, which the kit's button now has.
+                    let label = format!("{} Retry", crate::icon::ROTATE);
+                    if kit_button_on(ui, &label, Btn::Secondary, 0.0, app.busy.is_none()).clicked() {
                         out = Some(RowAction::Retry);
                     }
                 } else if e.error.is_none() && icon_button(ui, "copy", "Copy").clicked() {
@@ -1349,11 +1351,11 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
 
 fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        ui.label(b("Dictionary", 38.0, theme::TEXT));
+        ui.label(b("Dictionary", 38.0, theme::TEXT()));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let btn = egui::Button::new(d("NEW WORD", 12.0, theme::PAPER))
-                .fill(theme::INK)
-                .stroke(Stroke::new(2.5, theme::PAPER))
+            let btn = egui::Button::new(d("NEW WORD", 12.0, theme::PAPER()))
+                .fill(theme::INK())
+                .stroke(Stroke::new(2.5, theme::PAPER()))
                 .corner_radius(11)
                 .min_size(vec2(0.0, 32.0));
             if ui.add(btn).clicked() {
@@ -1382,16 +1384,16 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     if let Some(w) = &mut app.new_word {
         let mut add = false;
         let mut cancel = false;
-        theme::soft(theme::PANEL, 10, 2.0, 2).inner_margin(Margin::same(12)).show(ui, |ui| {
+        theme::soft(theme::PANEL(), 10, 2.0, 2).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(t("Add a name, term or spelling you want written exactly like this.", 13.5, theme::MUTED));
+            ui.label(t("Add a name, term or spelling you want written exactly like this.", 13.5, theme::MUTED()));
             ui.horizontal(|ui| {
                 let r = ui.add(egui::TextEdit::singleline(w).hint_text("e.g. Kubernetes, Adaeze, feat/idle-timeout").desired_width(360.0));
                 if !r.has_focus() && !r.lost_focus() && w.is_empty() {
                     r.request_focus();
                 }
                 add = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                add |= ui.add(egui::Button::new(d("ADD", 12.0, theme::PAPER)).fill(theme::INK).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11)).clicked();
+                add |= ui.add(egui::Button::new(d("ADD", 12.0, theme::PAPER())).fill(theme::INK()).stroke(Stroke::new(2.5, theme::PAPER())).corner_radius(11)).clicked();
                 cancel = btn(ui, "Cancel").clicked();
             });
         });
@@ -1426,8 +1428,8 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
     if words.is_empty() {
         ui.add_space(30.0);
         ui.vertical_centered(|ui| {
-            ui.label(m("No words yet", 18.0, theme::TEXT));
-            ui.label(para("Add names and terms here, or correct a dictation in History and new words are learned automatically.", 14.0, theme::MUTED));
+            ui.label(m("No words yet", 18.0, theme::TEXT()));
+            ui.label(para("Add names and terms here, or correct a dictation in History and new words are learned automatically.", 14.0, theme::MUTED()));
         });
         return;
     }
@@ -1441,15 +1443,15 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
             for (idx, d) in row {
                 let (r, resp) = ui.allocate_exact_size(vec2(w, 38.0), Sense::hover());
                 let p = ui.painter();
-                p.rect_filled(r, 6.0, Color32::from_rgb(0x26, 0x26, 0x26));
-                p.rect_stroke(r, 6.0, Stroke::new(1.0, Color32::from_rgb(0x33, 0x33, 0x33)), StrokeKind::Inside);
-                let (icon, c) = if d.auto { (crate::icon::SPARKLES, theme::GREEN) } else { (crate::icon::PENCIL, theme::FAINT) };
+                p.rect_filled(r, 6.0, theme::SURFACE());
+                p.rect_stroke(r, 6.0, Stroke::new(1.0, theme::LINE()), StrokeKind::Inside);
+                let (icon, c) = if d.auto { (crate::icon::SPARKLES, theme::GREEN()) } else { (crate::icon::PENCIL, theme::FAINT()) };
                 p.text(pos2(r.left() + 18.0, r.center().y), Align2::CENTER_CENTER, icon, FontId::proportional(11.0), c);
-                p.text(pos2(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, &d.word, FontId::new(14.0, theme::medium()), theme::TEXT);
+                p.text(pos2(r.left() + 32.0, r.center().y), Align2::LEFT_CENTER, &d.word, FontId::new(14.0, theme::medium()), theme::TEXT());
                 if resp.hovered() {
                     let x = Rect::from_center_size(pos2(r.right() - 18.0, r.center().y), Vec2::splat(20.0));
                     let xr = ui.interact(x, ui.id().with(("del", *idx)), Sense::click());
-                    draw_icon(ui.painter(), "close", x.center(), if xr.hovered() { theme::TEXT } else { theme::MUTED });
+                    draw_icon(ui.painter(), "close", x.center(), if xr.hovered() { theme::TEXT() } else { theme::MUTED() });
                     if xr.clicked() {
                         remove = Some(*idx);
                     }
@@ -1468,13 +1470,13 @@ fn toast(app: &mut DictateApp, ctx: &egui::Context) {
     let Some(toast) = &app.toast else { return };
     egui::Area::new(egui::Id::new("toast")).order(egui::Order::Tooltip).anchor(Align2::CENTER_BOTTOM, vec2(108.0, -28.0)).show(ctx, |ui| {
         egui::Frame::new()
-            .fill(if toast.error { theme::RED } else { theme::SURFACE })
-            .stroke(Stroke::new(2.5, theme::INK))
+            .fill(if toast.error { theme::RED() } else { theme::SURFACE() })
+            .stroke(Stroke::new(2.5, theme::INK()))
             .corner_radius(10)
             .inner_margin(Margin::symmetric(16, 10))
             .show(ui, |ui| {
                 ui.set_max_width(520.0);
-                ui.label(t(&toast.text, 14.0, theme::TEXT));
+                ui.label(t(&toast.text, 14.0, theme::TEXT()));
             });
     });
     ctx.request_repaint_after(std::time::Duration::from_millis(500));

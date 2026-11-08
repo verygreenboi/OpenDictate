@@ -100,6 +100,27 @@ impl KeepHistory {
     }
 }
 
+/// Paper & Ink both ways up. The kit ships a light set of tokens and a dark
+/// twin; this picks which one the app wears.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
+pub enum Appearance {
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 2] = [Appearance::Dark, Appearance::Light];
+    pub fn label(self) -> &'static str {
+        match self {
+            Appearance::Dark => "Dark",
+            Appearance::Light => "Light",
+        }
+    }
+    pub fn is_light(self) -> bool {
+        self == Appearance::Light
+    }
+}
+
 /// The three things a shortcut can start.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Hash)]
 pub enum Action {
@@ -170,8 +191,14 @@ pub struct Settings {
     pub hide_text_model_notice: bool,
     pub typing_wpm: f32,
     pub keep_history: KeepHistory,
+    #[serde(default = "dark")]
+    pub appearance: Appearance,
 
     pub dictionary: Vec<DictWord>,
+}
+
+fn dark() -> Appearance {
+    Appearance::Dark
 }
 
 impl Settings {
@@ -231,6 +258,7 @@ impl Default for Settings {
             hide_text_model_notice: false,
             typing_wpm: 40.0,
             keep_history: KeepHistory::Forever,
+            appearance: Appearance::Dark,
 
             dictionary: Vec::new(),
         }

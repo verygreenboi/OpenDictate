@@ -30,6 +30,7 @@ cp "target/release/$BIN_IN" "$BUNDLE/Contents/MacOS/$BIN_OUT"
 chmod +x "$BUNDLE/Contents/MacOS/$BIN_OUT"
 
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
+cp assets/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
 
 cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -37,6 +38,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key><string>$BIN_OUT</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>app.opendictate.desktop</string>
     <key>CFBundleName</key><string>$APP_NAME</string>
     <key>CFBundleDisplayName</key><string>$APP_NAME</string>

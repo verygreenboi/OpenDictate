@@ -19,6 +19,7 @@ mod macos_bundle {
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key><string>open-dictate</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleIdentifier</key><string>app.opendictate.desktop</string>
     <key>CFBundleName</key><string>Open Dictate</string>
     <key>CFBundleDisplayName</key><string>Open Dictate</string>
@@ -47,8 +48,10 @@ mod macos_bundle {
         if exe.to_string_lossy().contains(".app/Contents/MacOS/") {
             return false; // already running as an app
         }
+        const ICNS: &[u8] = include_bytes!("../assets/AppIcon.icns");
         let bundle = crate::settings::data_dir().join("Open Dictate.app");
         let macos = bundle.join("Contents/MacOS");
+        let icon = bundle.join("Contents/Resources/AppIcon.icns");
         let target = macos.join("open-dictate");
         let plist = PLIST.replace("VERSION", env!("CARGO_PKG_VERSION"));
         let plist_path = bundle.join("Contents/Info.plist");
@@ -57,7 +60,9 @@ mod macos_bundle {
             // Remove before copying so a running copy keeps its own file.
             let _ = std::fs::remove_file(&target);
             if std::fs::create_dir_all(&macos).is_err()
+                || std::fs::create_dir_all(bundle.join("Contents/Resources")).is_err()
                 || std::fs::write(&plist_path, &plist).is_err()
+                || std::fs::write(&icon, ICNS).is_err()
                 || std::fs::copy(&exe, &target).is_err()
             {
                 return false;

@@ -3,7 +3,7 @@
 
 use crate::app::{DictateApp, SettingsTab};
 use crate::engines;
-use crate::settings::{Action, SpeechEngine, TextEngine, Tone};
+use crate::settings::{Action, Appearance, SpeechEngine, TextEngine, Tone};
 use crate::theme::{self, b, d, m, para, t};
 use crate::views::{VERSION, icon_button, kbd, nav_item};
 use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Margin, Sense, Stroke, vec2};
@@ -107,7 +107,7 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             let (nav, _) = ui.allocate_exact_size(vec2(202.0, size.y), Sense::hover());
-            ui.painter().rect_filled(nav, CornerRadius { nw: 12, sw: 12, ne: 0, se: 0 }, Color32::from_rgb(0x3A, 0x3A, 0x3A));
+            ui.painter().rect_filled(nav, CornerRadius { nw: 12, sw: 12, ne: 0, se: 0 }, theme::SURFACE());
             let mut nav_ui = ui.new_child(
                 egui::UiBuilder::new().max_rect(nav.shrink2(vec2(12.0, 22.0))).layout(Layout::top_down(Align::Min)),
             );
@@ -140,8 +140,8 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
                     ui.vertical(|ui| {
                         ui.set_width(size.x - 202.0 - 36.0 - 76.0);
                         ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.label(d(title, 24.0, theme::TEXT));
-                        ui.label(para(standfirst, 13.0, theme::MUTED));
+                        ui.label(d(title, 24.0, theme::TEXT()));
+                        ui.label(para(standfirst, 13.0, theme::MUTED()));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                         ui.add_space(20.0);
@@ -152,7 +152,7 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
                 });
                 ui.add_space(14.0);
                 let (hr, _) = ui.allocate_exact_size(vec2(size.x - 202.0, 1.5), Sense::hover());
-                ui.painter().rect_filled(hr, 0.0, theme::LINE);
+                ui.painter().rect_filled(hr, 0.0, theme::LINE());
                 egui::ScrollArea::vertical().id_salt(("settings-scroll", tab as u8)).auto_shrink(false).show(ui, |ui| {
                     egui::Frame::new().inner_margin(Margin { left: 36, right: 36, top: 0, bottom: 30 }).show(ui, |ui| {
                         ui.set_width(size.x - 202.0 - 72.0);
@@ -179,12 +179,12 @@ fn section(ui: &mut egui::Ui, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 9.0;
         let (ir, _) = ui.allocate_exact_size(vec2(19.0, 19.0), Sense::hover());
-        crate::views::kit_icon(ui.painter(), icon, ir.center(), theme::MUTED);
-        ui.label(d(title, 15.0, theme::TEXT));
+        crate::views::kit_icon(ui.painter(), icon, ir.center(), theme::MUTED());
+        ui.label(d(title, 15.0, theme::TEXT()));
     });
     ui.add_space(9.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, theme::LINE);
+    ui.painter().rect_filled(r, 0.0, theme::LINE());
     ui.add_space(4.0);
 }
 
@@ -202,9 +202,9 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
         ui.vertical(|ui| {
             ui.set_width(left);
             ui.spacing_mut().item_spacing.y = 3.0;
-            ui.label(m(title, 13.5, theme::TEXT));
+            ui.label(m(title, 13.5, theme::TEXT()));
             if !desc.is_empty() {
-                ui.label(para(desc, 12.0, theme::MUTED));
+                ui.label(para(desc, 12.0, theme::MUTED()));
             }
         });
         ui.add_space(18.0);
@@ -219,18 +219,18 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
     });
     ui.add_space(14.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, theme::LINE);
+    ui.painter().rect_filled(r, 0.0, theme::LINE());
 }
 
 fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     egui::Frame::new()
-        .fill(Color32::from_rgb(0x2E, 0x3A, 0x5E))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(0x44, 0x5A, 0x96)))
+        .fill(theme::SURFACE())
+        .stroke(Stroke::new(1.0, theme::LINE()))
         .corner_radius(10)
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(m("What you need", 14.0, theme::TEXT));
+            ui.label(m("What you need", 14.0, theme::TEXT()));
             crate::views::bullets(
                 ui,
                 &[
@@ -238,7 +238,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     "Text model (optional): removes filler words, fixes corrections and formats. Translate and Ask anything need it. Without one, Dictate pastes exactly what you said.",
                 ],
                 13.0,
-                Color32::from_rgb(0xD8, 0xDE, 0xF0),
+                theme::MUTED(),
             );
         });
     let ctx = ui.ctx().clone();
@@ -258,7 +258,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     Some(p) => crate::views::status(ui, crate::views::State::Ok, format!("Found at {}", p.display())),
                     None if health.checked => crate::views::status(ui, crate::views::State::Bad, "Not found"),
                     None => {
-                        ui.label(t("Checking…", 12.5, theme::MUTED));
+                        ui.label(t("Checking…", 12.5, theme::MUTED()));
                     }
                 };
             });
@@ -284,16 +284,16 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     changed |= ui.add(egui::TextEdit::singleline(&mut app.s.whisper_model).desired_width(300.0)).changed();
                 }
             });
-            ui.label(m("Download a model", 14.0, theme::TEXT));
+            ui.label(m("Download a model", 14.0, theme::TEXT()));
             ui.add_space(4.0);
             for choice in engines::WHISPER_MODELS {
                 let have = local.iter().any(|p| p.file_name().is_some_and(|f| f == choice.file));
-                theme::soft(theme::SURFACE, 12, 2.0, 2).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                theme::soft(theme::SURFACE(), 12, 2.0, 2).corner_radius(8).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.label(m(format!("{}  ·  {}", choice.label, choice.size), 13.5, theme::TEXT));
-                            ui.label(t(choice.note, 12.5, theme::MUTED));
+                            ui.label(m(format!("{}  ·  {}", choice.label, choice.size), 13.5, theme::TEXT()));
+                            ui.label(t(choice.note, 12.5, theme::MUTED()));
                         });
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if let Some((f, p)) = &app.download {
@@ -371,7 +371,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                         });
                     }
                     None => {
-                        ui.label(t("Checking…", 12.5, theme::MUTED));
+                        ui.label(t("Checking…", 12.5, theme::MUTED()));
                     }
                 }
             });
@@ -401,9 +401,9 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     ui.add(egui::TextEdit::singleline(&mut app.pull_name).hint_text("model name").desired_width(186.0));
                     let busy = app.download.is_some();
                     let ready = !busy && !app.pull_name.trim().is_empty();
-                    let btn = egui::Button::new(d("DOWNLOAD", 12.0, if ready { theme::PAPER } else { theme::FAINT }))
-                        .fill(if ready { theme::INK } else { theme::SURFACE })
-                        .stroke(Stroke::new(2.5, if ready { theme::PAPER } else { theme::FAINT }))
+                    let btn = egui::Button::new(d("DOWNLOAD", 12.0, if ready { theme::PAPER() } else { theme::FAINT() }))
+                        .fill(if ready { theme::INK() } else { theme::SURFACE() })
+                        .stroke(Stroke::new(2.5, if ready { theme::PAPER() } else { theme::FAINT() }))
                         .corner_radius(11);
                     if ui.add_enabled(ready, btn).clicked() {
                         let p: engines::SharedProgress = Default::default();
@@ -415,7 +415,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 });
                 ui.add_space(9.0);
                 let spaced: String = "SUGGESTIONS".chars().flat_map(|c| [c, ' ']).collect();
-                ui.label(b(spaced.trim_end(), 9.0, theme::FAINT));
+                ui.label(b(spaced.trim_end(), 9.0, theme::FAINT()));
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
@@ -426,9 +426,9 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                             let label = format!("{}  {sug}", crate::icon::CHECK);
                             ui.add_enabled(
                                 false,
-                                egui::Button::new(t(label, 13.0, theme::FAINT))
-                                    .fill(theme::SURFACE)
-                                    .stroke(Stroke::new(2.0, theme::FAINT)),
+                                egui::Button::new(t(label, 13.0, theme::FAINT()))
+                                    .fill(theme::SURFACE())
+                                    .stroke(Stroke::new(2.0, theme::FAINT())),
                             );
                         } else if crate::views::btn(ui, sug).clicked() {
                             app.pull_name = sug.into();
@@ -489,7 +489,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     app.refresh_health(&ctx);
                 }
                 if let Some(Err(e)) = &health.remote_text {
-                    ui.label(t(e, 12.0, theme::RED));
+                    ui.label(t(e, 12.0, theme::RED()));
                 }
             });
         }
@@ -497,19 +497,19 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     }
 
     section(ui, crate::icon::FLASK, "Try it");
-    ui.label(para("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED));
+    ui.label(para("Type something messy, the way people talk, and see what your text model makes of it.", 13.5, theme::MUTED()));
     ui.add(egui::TextEdit::multiline(&mut app.test_input).desired_width(ui.available_width()).desired_rows(2));
     let running = app.test_running.load(std::sync::atomic::Ordering::SeqCst);
-    let btn = egui::Button::new(d(if running { "RUNNING…" } else { "RUN TEST" }, 12.0, theme::PAPER)).fill(theme::INK).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11);
+    let btn = egui::Button::new(d(if running { "RUNNING…" } else { "RUN TEST" }, 12.0, theme::PAPER())).fill(theme::INK()).stroke(Stroke::new(2.5, theme::PAPER())).corner_radius(11);
     if ui.add_enabled(!running, btn).clicked() {
         app.run_test(&ctx);
     }
     if let Some(r) = app.test_output.lock().unwrap().clone() {
-        theme::soft(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+        theme::soft(theme::SURFACE(), 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match r {
-                Ok(text) => ui.label(t(text, 14.0, theme::TEXT)),
-                Err(e) => ui.label(t(e, 13.5, theme::RED)),
+                Ok(text) => ui.label(t(text, 14.0, theme::TEXT())),
+                Err(e) => ui.label(t(e, 13.5, theme::RED())),
             };
         });
     }
@@ -521,6 +521,23 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
+    section(ui, crate::icon::PALETTE, "Appearance");
+    let mut light = app.s.appearance.is_light();
+    crate::views::pill_tabs(
+        ui,
+        &mut light,
+        &[(false, Appearance::Dark.label()), (true, Appearance::Light.label())],
+    );
+    if light != app.s.appearance.is_light() {
+        app.s.appearance = if light { Appearance::Light } else { Appearance::Dark };
+        theme::set_light(light);
+        // The widget styles are built from the palette once and cached, so
+        // they have to be rebuilt rather than left on the old colours.
+        theme::apply_style(ui.ctx());
+        app.changed();
+    }
+    ui.add_space(14.0);
+
     section(ui, crate::icon::KEYBOARD, "Shortcuts");
     // One choice of two, which is what the segmented control is for. As a
     // pair of selectable labels the unchosen one looked like plain text and
@@ -550,7 +567,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             let mut remove = None;
             for (i, k) in app.s.keys(a).iter().enumerate() {
                 egui::Frame::new()
-                    .stroke(Stroke::new(2.0, theme::INK))
+                    .stroke(Stroke::new(2.0, theme::INK()))
                     .corner_radius(8)
                     .inner_margin(Margin::symmetric(6, 5))
                     .show(ui, |ui| {
@@ -622,7 +639,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(para(
         "Pasting needs Accessibility access and recording needs Microphone access (System Settings › Privacy & Security).",
         12.5,
-        theme::FAINT,
+        theme::FAINT(),
     ));
 }
 
@@ -657,18 +674,18 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         let level = app.mic_test.as_ref().map(|r| r.level()).unwrap_or(0.0);
         let (r, _) = ui.allocate_exact_size(vec2(260.0, 10.0), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(r, 5.0, Color32::from_rgb(0x26, 0x26, 0x26));
+        p.rect_filled(r, 5.0, theme::TRACK());
         let frac = (level * 2.0).clamp(0.0, 1.0);
         if frac > 0.0 {
             let mut fill = r;
             fill.set_width(r.width() * frac);
-            let c = if frac > 0.95 { theme::RED } else if frac > 0.08 { theme::GREEN } else { theme::FAINT };
+            let c = if frac > 0.95 { theme::RED() } else if frac > 0.08 { theme::GREEN() } else { theme::FAINT() };
             p.rect_filled(fill, 5.0, c);
         }
         ui.add_space(4.0);
         let testing = app.mic_test.is_some();
         let label = if testing { "Stop test" } else { "Test microphone" };
-        let btn = egui::Button::new(d(label.to_uppercase(), 12.0, theme::PAPER)).fill(if testing { theme::RED } else { theme::INK }).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11);
+        let btn = egui::Button::new(d(label.to_uppercase(), 12.0, theme::PAPER())).fill(if testing { theme::RED() } else { theme::INK() }).stroke(Stroke::new(2.5, theme::PAPER())).corner_radius(11);
         if ui.add_enabled(app.recording.is_none(), btn).clicked() {
             app.toggle_mic_test();
         }
@@ -676,7 +693,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             if let Some(e) = r.error() {
                 crate::views::status(ui, crate::views::State::Bad, format!("The microphone stopped: {e}"));
             } else if r.sample_count() == 0 && r.elapsed() > 1.5 {
-                ui.label(para(format!("{} No sound is arriving from this microphone. Try another one or reconnect it.", crate::icon::WARN), 12.5, theme::RED));
+                ui.label(para(format!("{} No sound is arriving from this microphone. Try another one or reconnect it.", crate::icon::WARN), 12.5, theme::RED()));
             } else if r.elapsed() > 1.5 && r.peak() == 0.0 {
                 // Exact digital silence on a live device is what macOS sends when access is blocked.
                 crate::views::status(ui, crate::views::State::Bad, "macOS is blocking the microphone (it only sends silence).");
@@ -684,9 +701,9 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     open_mic_privacy();
                 }
             } else {
-                ui.label(t(if frac < 0.03 { "Not hearing anything yet…".to_string() } else { format!("Hearing you {}", crate::icon::CHECK) }, 12.5, theme::MUTED));
+                ui.label(t(if frac < 0.03 { "Not hearing anything yet…".to_string() } else { format!("Hearing you {}", crate::icon::CHECK) }, 12.5, theme::MUTED()));
             }
-            ui.label(t(r.info(), 11.5, theme::FAINT));
+            ui.label(t(r.info(), 11.5, theme::FAINT()));
         }
     });
     row(ui, "Input boost", "Turn up if your words come out quiet or are missed.", 260.0, |ui| {
@@ -737,14 +754,14 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         for tone in Tone::ALL {
             let active = app.s.tone == tone;
             let resp = egui::Frame::new()
-                .fill(if active { theme::INK } else { theme::SURFACE })
-                .stroke(Stroke::new(2.5, theme::INK))
+                .fill(if active { theme::INK() } else { theme::SURFACE() })
+                .stroke(Stroke::new(2.5, theme::INK()))
                 .corner_radius(15)
                 .shadow(egui::epaint::Shadow {
                     offset: if active { [0, 0] } else { [3, 4] },
                     blur: 0,
                     spread: 0,
-                    color: theme::SOFT_SHADOW,
+                    color: theme::SOFT_SHADOW(),
                 })
                 .inner_margin(Margin { left: 12, right: 12, top: 11, bottom: 13 })
                 .show(ui, |ui| {
@@ -758,20 +775,20 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     ui.vertical(|ui| {
                         ui.set_width(w);
                         ui.set_min_height(56.0);
-                        let fg = if active { theme::ON_FILL } else { theme::TEXT };
+                        let fg = if active { theme::ON_FILL() } else { theme::TEXT() };
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 8.0;
                             // A marker, not a second target: the card is the control.
                             let (dr, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                             let p = ui.painter();
-                            p.circle_filled(dr.center(), 9.0, if active { theme::PAPER } else { theme::SURFACE });
+                            p.circle_filled(dr.center(), 9.0, if active { theme::PAPER() } else { theme::SURFACE() });
                             p.circle_stroke(dr.center(), 8.0, Stroke::new(2.0, fg));
                             if active {
-                                p.circle_filled(dr.center(), 4.0, theme::INK);
+                                p.circle_filled(dr.center(), 4.0, theme::INK());
                             }
                             ui.label(m(tone.label(), 14.0, fg));
                         });
-                        ui.label(para(tone.blurb(), 12.0, if active { theme::ON_FILL_DIM } else { theme::MUTED }));
+                        ui.label(para(tone.blurb(), 12.0, if active { theme::ON_FILL_DIM() } else { theme::MUTED() }));
                     });
                 });
             if ui.interact(resp.response.rect, ui.id().with(tone.label()), Sense::click()).clicked() {
@@ -792,7 +809,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         c |= crate::views::kit_checkbox(ui, &mut app.s.auto_format).changed();
     });
     section(ui, crate::icon::PENCIL_LINE, "Your own instructions");
-    ui.label(t("Anything else your text model should always do, e.g. \"Use British spelling.\"", 13.5, theme::MUTED));
+    ui.label(t("Anything else your text model should always do, e.g. \"Use British spelling.\"", 13.5, theme::MUTED()));
     c |= ui.add(egui::TextEdit::multiline(&mut app.s.custom_instructions).desired_width(ui.available_width()).desired_rows(3)).changed();
     section(ui, crate::icon::TIMER, "Time saved");
     row(ui, "Your typing speed", "Used to work out the time saved on Home.", 220.0, |ui| {
@@ -802,22 +819,22 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         app.changed();
     }
     section(ui, crate::icon::EYE, "What your text model is told");
-    theme::soft(theme::SURFACE, 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
+    theme::soft(theme::SURFACE(), 8, 2.0, 2).corner_radius(8).inner_margin(Margin::same(10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.label(t(engines::polish_prompt(&app.s, false), 12.5, theme::MUTED));
+        ui.label(t(engines::polish_prompt(&app.s, false), 12.5, theme::MUTED()));
     });
 }
 
 fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
-    ui.label(t(format!("Open Dictate v{VERSION}"), 14.0, theme::TEXT));
+    ui.label(t(format!("Open Dictate v{VERSION}"), 14.0, theme::TEXT()));
     ui.label(para(
         "Voice dictation that runs on the models you choose. Speak in any app; your words are transcribed, tidied up and pasted where your cursor is.",
         13.5,
-        theme::MUTED,
+        theme::MUTED(),
     ));
     section(ui, crate::icon::FOLDER, "Your data");
     let dir = crate::settings::data_dir();
-    ui.label(t(dir.display().to_string(), 13.0, theme::MUTED));
+    ui.label(t(dir.display().to_string(), 13.0, theme::MUTED()));
     if crate::views::btn(ui, "Open folder").clicked() {
         let _ = std::process::Command::new("open").arg(&dir).spawn();
     }
@@ -825,7 +842,7 @@ fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.label(t(
         format!("{} dictations · {} words · {} in history", app.stats.sessions, app.stats.words, app.history.len()),
         13.5,
-        theme::MUTED,
+        theme::MUTED(),
     ));
 }
 
@@ -860,14 +877,14 @@ pub fn capture_shortcut(app: &mut DictateApp, ctx: &egui::Context) {
     });
     egui::Area::new(egui::Id::new("capture")).order(egui::Order::Tooltip).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
         egui::Frame::new()
-            .fill(theme::SURFACE)
-            .stroke(Stroke::new(2.5, theme::INK))
-            .stroke(Stroke::new(1.0, theme::ACCENT))
+            .fill(theme::SURFACE())
+            .stroke(Stroke::new(2.5, theme::INK()))
+            .stroke(Stroke::new(1.0, theme::ACCENT()))
             .corner_radius(12)
             .inner_margin(Margin::same(20))
             .show(ui, |ui| {
-                ui.label(b(format!("Press the shortcut for {}", action.label()), 16.0, theme::TEXT));
-                ui.label(para("Function keys (F13–F19) or a combination like ⌥ Space work best. Esc cancels.", 13.0, theme::MUTED));
+                ui.label(b(format!("Press the shortcut for {}", action.label()), 16.0, theme::TEXT()));
+                ui.label(para("Function keys (F13–F19) or a combination like ⌥ Space work best. Esc cancels.", 13.0, theme::MUTED()));
             });
     });
     if let Some(r) = done {

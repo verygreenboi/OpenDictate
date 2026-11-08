@@ -124,6 +124,8 @@ pub struct DictateApp {
 
 impl DictateApp {
     pub fn new(cc: &eframe::CreationContext<'_>, shot: Option<PathBuf>) -> Self {
+        let mut s = settings::load_settings();
+        theme::set_light(s.appearance.is_light());
         theme::install(&cc.egui_ctx);
         let (jobs_tx, jobs_rx) = channel();
         let (hk_tx, hk_rx) = channel();
@@ -133,7 +135,6 @@ impl DictateApp {
             ctx.request_repaint();
         }));
 
-        let mut s = settings::load_settings();
         if s.whisper_model.is_empty() {
             // Pick a downloaded model automatically on first run.
             if let Some(p) = engines::local_whisper_models().into_iter().next_back() {
@@ -710,9 +711,9 @@ impl DictateApp {
             // Inset so the hard offset shadow has room inside the viewport.
             let rect = ui.max_rect().shrink(5.0);
             let p = ui.painter();
-            p.rect_filled(rect.translate(egui::vec2(4.0, 5.0)), 23.0, theme::INK);
-            p.rect_filled(rect, 23.0, theme::SURFACE);
-            p.rect_stroke(rect, 23.0, egui::Stroke::new(3.0, theme::INK), egui::StrokeKind::Inside);
+            p.rect_filled(rect.translate(egui::vec2(4.0, 5.0)), 23.0, theme::INK());
+            p.rect_filled(rect, 23.0, theme::SURFACE());
+            p.rect_stroke(rect, 23.0, egui::Stroke::new(3.0, theme::INK()), egui::StrokeKind::Inside);
             let t = ui.input(|i| i.time) as f32;
             let left = rect.left() + 22.0;
             for i in 0..9 {
@@ -723,7 +724,7 @@ impl DictateApp {
                 } else {
                     4.0 + ((t * 5.0 - i as f32 * 0.6).sin() * 0.5 + 0.5) * 10.0
                 };
-                let c = if listening { egui::Color32::WHITE } else { theme::ACCENT };
+                let c = if listening { egui::Color32::WHITE } else { theme::ACCENT() };
                 p.rect_filled(egui::Rect::from_center_size(egui::pos2(x, rect.center().y), egui::vec2(3.0, h)), 1.5, c);
             }
             let label = if listening { action.label().to_string() } else { "Thinking…".to_string() };
@@ -732,14 +733,14 @@ impl DictateApp {
                 egui::Align2::LEFT_CENTER,
                 label,
                 egui::FontId::new(14.0, theme::medium()),
-                theme::TEXT,
+                theme::TEXT(),
             );
             p.text(
                 egui::pos2(rect.right() - 20.0, rect.center().y),
                 egui::Align2::RIGHT_CENTER,
                 format!("{}:{:02}", secs as u32 / 60, secs as u32 % 60),
                 egui::FontId::new(13.0, egui::FontFamily::Proportional),
-                theme::MUTED,
+                theme::MUTED(),
             );
         });
     }
