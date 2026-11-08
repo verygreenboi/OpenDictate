@@ -557,7 +557,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         }
     });
     row(ui, "Input boost", "Turn up if your words come out quiet or are missed.", 260.0, |ui| {
-        changed |= ui.add(egui::Slider::new(&mut app.s.input_gain, 0.5..=4.0).step_by(0.25).suffix("×")).changed();
+        changed |= crate::views::slider(ui, &mut app.s.input_gain, 0.5..=4.0, 0.25, "\u{00d7}", 260.0).changed();
     });
     if changed {
         app.changed();
@@ -664,7 +664,7 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     c |= ui.add(egui::TextEdit::multiline(&mut app.s.custom_instructions).desired_width(ui.available_width()).desired_rows(3)).changed();
     section(ui, crate::icon::TIMER, "Time saved");
     row(ui, "Your typing speed", "Used to work out the time saved on Home.", 220.0, |ui| {
-        c |= ui.add(egui::Slider::new(&mut app.s.typing_wpm, 15.0..=120.0).suffix(" WPM")).changed();
+        c |= crate::views::slider(ui, &mut app.s.typing_wpm, 15.0..=120.0, 1.0, " WPM", 220.0).changed();
     });
     if c {
         app.changed();

@@ -471,6 +471,52 @@ pub fn combo_value<T: PartialEq + Clone>(ui: &mut egui::Ui, current: &mut T, val
     r
 }
 
+/// The kit's .slider: an ink-edged track with an ink thumb riding it, and
+/// the value read out beside it in the display face.
+///
+/// Painted rather than egui's Slider, whose rail takes colours from the
+/// widget visuals and came out invisible against the sheet.
+pub fn slider(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    step: f32,
+    suffix: &str,
+    w: f32,
+) -> egui::Response {
+    let read_w = 74.0;
+    let (slot, mut resp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click_and_drag());
+    let track = Rect::from_min_size(
+        pos2(slot.left() + 10.0, slot.center().y - 5.5),
+        vec2((slot.width() - read_w - 30.0).max(40.0), 11.0),
+    );
+    let (lo, hi) = (*range.start(), *range.end());
+    if let Some(pos) = resp.interact_pointer_pos() {
+        let t = ((pos.x - track.left()) / track.width()).clamp(0.0, 1.0);
+        let raw = lo + t * (hi - lo);
+        let snapped = if step > 0.0 { (raw / step).round() * step } else { raw };
+        if (snapped - *value).abs() > f32::EPSILON {
+            *value = snapped;
+            resp.mark_changed();
+        }
+    }
+    let t = ((*value - lo) / (hi - lo)).clamp(0.0, 1.0);
+    let p = ui.painter();
+    p.rect_filled(track, 5.0, theme::SURFACE);
+    p.rect_stroke(track, 5.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    let thumb = Rect::from_center_size(pos2(track.left() + t * track.width(), track.center().y), vec2(19.0, 19.0));
+    p.rect_filled(thumb.translate(vec2(2.0, 3.0)), 7.0, theme::INK);
+    p.rect_filled(thumb, 7.0, theme::INK);
+    p.rect_stroke(thumb, 7.0, Stroke::new(2.5, theme::PAPER), egui::StrokeKind::Inside);
+    let shown = if step >= 1.0 {
+        format!("{:.0}{suffix}", *value)
+    } else {
+        format!("{:.2}{suffix}", *value)
+    };
+    p.text(pos2(slot.right(), slot.center().y), Align2::RIGHT_CENTER, shown, FontId::new(13.0, theme::display()), theme::TEXT);
+    resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
+}
+
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
 fn sp_cap(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
