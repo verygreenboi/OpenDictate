@@ -2,7 +2,7 @@
 //! lives in `settings_view`.
 
 use crate::app::{DictateApp, Page, SettingsTab};
-use crate::settings::{Action, DictWord, KeepHistory, SpeechEngine, TextEngine};
+use crate::settings::{Action, DictWord, KeepHistory};
 use crate::stats;
 use crate::theme::{self, b, d, m, para, t};
 use chrono::{Datelike, Duration, Local};
@@ -294,6 +294,11 @@ pub fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
         // not confirmed. Drawn to the same recipe as clock and book.
         "check" => {
             p.add(poly(&[(5.0, 12.4), (10.0, 17.4), (19.2, 6.9)]));
+        }
+        // not in the sprite either: the kit marks "opens something" with the
+        // .inspect button, which has no room here.
+        "chev" => {
+            p.add(poly(&[(9.5, 5.5), (16.0, 12.0), (9.5, 18.5)]));
         }
         // i-lens
         "lens" => {
@@ -893,8 +898,7 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         });
         ui.label(t(format!("Personalization · {} tone", app.s.tone.label()), 14.0, theme::MUTED));
         ui.add_space(10.0);
-        let btn = egui::Button::new(m("Personalize", 13.0, theme::TEXT)).fill(Color32::from_rgb(0x48, 0x48, 0x48)).corner_radius(12);
-        if ui.add(btn).clicked() {
+        if btn(ui, "Personalize").clicked() {
             app.settings_tab = Some(SettingsTab::Personalization);
         }
         // Radar-style circle with one dot per dictionary word.
@@ -918,10 +922,10 @@ fn personalization_card(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
-        for a in Action::ALL {
+        for (i, a) in Action::ALL.iter().enumerate() {
             ui.label(t(a.label(), 12.5, Color32::from_rgb(0xD8, 0xD8, 0xD8)));
             ui.horizontal_wrapped(|ui| {
-                let keys = app.s.keys(a);
+                let keys = app.s.keys(*a);
                 if keys.is_empty() {
                     ui.label(t("Not set", 12.0, theme::FAINT));
                 }
@@ -929,9 +933,10 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
                     kbd(ui, k);
                 }
             });
-            ui.add_space(6.0);
+            if i + 1 < Action::ALL.len() {
+                ui.add_space(6.0);
+            }
         }
-        ui.label(t(if app.s.hold_to_talk { "Hold while you speak" } else { "Press to start and stop" }, 11.5, theme::FAINT));
     });
     ui.add_space(24.0);
 
@@ -953,47 +958,49 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     }
     ui.add_space(14.0);
 
+    // One card for both models. Four facts each was three too many: once the
+    // dots are green nothing here changes again, and the engine names
+    // (whisper.cpp, Ollama) are detail the user never chose. The card opens
+    // Models, where all of it lives; the chevron says so.
     let (speech_ok, speech) = app.speech_ready();
     let (text_ok, text) = app.text_ready();
-    let speech_where = match app.s.speech_engine {
-        SpeechEngine::WhisperLocal => "whisper.cpp on this Mac",
-        SpeechEngine::OpenAiCompatible => "Your speech server",
-    };
-    let text_where = match app.s.text_engine {
-        TextEngine::Off => "No clean-up",
-        TextEngine::Ollama => "Ollama on this Mac",
-        TextEngine::OpenAiCompatible => "Your text server",
-    };
-    for (title, ok, name, place, tint) in [
-        ("Speech model", speech_ok, speech, speech_where, Color32::from_rgb(0x3A, 0x47, 0x5C)),
-        ("Text model", text_ok, text, if text_ok { text_where } else { "Optional · pastes as heard" }, Color32::from_rgb(0x4A, 0x45, 0x5E)),
-    ] {
-        let resp = theme::soft(tint, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
-            ui.set_width(186.0 - 24.0);
-            ui.label(b(title, 16.0, theme::TEXT));
-            ui.add_space(2.0);
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
-                let missing = if title == "Text model" { theme::AMBER } else { theme::RED };
-                ui.painter().circle_filled(r.center(), 3.5, if ok { theme::GREEN } else { missing });
-                ui.add(egui::Label::new(b(name, 13.5, theme::TEXT)).truncate());
+    let card = theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
+        ui.set_width(186.0 - 24.0);
+        ui.horizontal(|ui| {
+            ui.label(b(if speech_ok { "Ready" } else { "Not ready" }, 16.0, theme::TEXT));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(13.0, 13.0), Sense::hover());
+                kit_icon(ui.painter(), "chev", r.center(), theme::FAINT);
             });
-            ui.label(t(place, 13.0, Color32::from_rgb(0xC8, 0xC8, 0xD0)));
         });
-        let click = ui.interact(resp.response.rect, ui.id().with(title), Sense::click());
-        if click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            app.settings_tab = Some(SettingsTab::Models);
-            app.refresh_health(ui.ctx());
+        ui.add_space(4.0);
+        // Speech is required, so a gap there is wrong; text clean-up is
+        // optional, so a gap there has only been noticed.
+        for (ok, name, missing) in [(speech_ok, speech, theme::RED), (text_ok, text, theme::AMBER)] {
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(8.0, 17.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 3.5, if ok { theme::GREEN } else { missing });
+                ui.add(egui::Label::new(t(name, 13.0, theme::MUTED)).truncate());
+            });
         }
-        ui.add_space(14.0);
+    });
+    let click = ui.interact(card.response.rect, ui.id().with("models"), Sense::click());
+    if click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        app.settings_tab = Some(SettingsTab::Models);
+        app.refresh_health(ui.ctx());
     }
     ui.add_space(30.0);
-    ui.with_layout(Layout::top_down(Align::Max), |ui| {
-        ui.label(t(format!("Version v{VERSION}"), 12.0, theme::MUTED));
-        if link(ui, "Check models").clicked() {
-            app.refresh_health(ui.ctx());
-            app.notify("Checking your models…", false);
-        }
+    // Right-aligned to the card, not to the column: the start button is wider
+    // than everything else, and aligning to that put this under the scrollbar.
+    let card_w = card.response.rect.width();
+    ui.scope(|ui| {
+        ui.set_width(card_w);
+        ui.with_layout(Layout::top_down(Align::Max), |ui| {
+            if link(ui, "Check models").clicked() {
+                app.refresh_health(ui.ctx());
+                app.notify("Checking your models…", false);
+            }
+        });
     });
 }
 
@@ -1217,10 +1224,10 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                 } else if let Some((_, text)) = app.editing.as_mut().filter(|(w, _)| *w == e.when) {
                     ui.add(egui::TextEdit::multiline(text).desired_width(text_w).desired_rows(3));
                     ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
+                        if btn(ui, "Save").clicked() {
                             out = Some(RowAction::SaveEdit);
                         }
-                        if ui.button("Cancel").clicked() {
+                        if btn(ui, "Cancel").clicked() {
                             app.editing = None;
                         }
                     });
@@ -1333,7 +1340,7 @@ fn dictionary(app: &mut DictateApp, ui: &mut egui::Ui) {
                 }
                 add = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 add |= ui.add(egui::Button::new(d("ADD", 12.0, theme::PAPER)).fill(theme::INK).stroke(Stroke::new(2.5, theme::PAPER)).corner_radius(11)).clicked();
-                cancel = ui.button("Cancel").clicked();
+                cancel = btn(ui, "Cancel").clicked();
             });
         });
         ui.add_space(10.0);
