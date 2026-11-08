@@ -210,6 +210,10 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl
         ui.add_space(18.0);
         ui.vertical(|ui| {
             ui.set_width(control_w);
+            // The sheet zeroes item_spacing.x for its own nav-and-content
+            // split, and every row inherits it, so controls sitting side by
+            // side ended up touching. Rows get normal spacing back.
+            ui.spacing_mut().item_spacing.x = 8.0;
             control(ui);
         });
     });
@@ -414,6 +418,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 ui.label(b(spaced.trim_end(), 9.0, theme::FAINT));
                 ui.add_space(4.0);
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     for sug in ["llama3.2:3b", "qwen2.5:3b", "gemma3:4b"] {
                         let have = list.iter().any(|m| m == sug || m.trim_end_matches(":latest") == sug);
                         if have {
@@ -443,6 +448,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             row(ui, "Server address", "Base URL ending in /v1.", 300.0, |ui| {
                 changed |= ui.add(egui::TextEdit::singleline(&mut app.s.text_url).desired_width(300.0)).changed();
                 ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     for (name, url) in [
                         ("LM Studio", "http://localhost:1234/v1"),
                         ("OpenAI", "https://api.openai.com/v1"),
