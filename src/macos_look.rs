@@ -44,7 +44,7 @@ pub fn blur_window(min_width: f64) -> bool {
         {
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
-            let fx = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), content.bounds());
+            let fx = NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), content.frame());
             // UnderWindowBackground is the material meant for exactly this:
             // the whole window sitting on the desktop rather than a sidebar
             // or a popover.
@@ -52,10 +52,16 @@ pub fn blur_window(min_width: f64) -> bool {
             fx.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             // Without Active the blur stops when the window loses focus.
             fx.setState(NSVisualEffectState::Active);
-            fx.setAutoresizingMask(
-                NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-            );
-            content.addSubview_positioned_relativeTo(&fx, NSWindowOrderingMode::Below, None);
+            let fill = NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable;
+            fx.setAutoresizingMask(fill);
+            // In winit the content view IS the Metal view egui draws into, so
+            // a subview sits on top of the drawing and hides it. The blur has
+            // to become the container instead, with the renderer back inside
+            // it: everything egui paints then composites over the blur.
+            window.setContentView(Some(&fx));
+            fx.addSubview(&content);
+            content.setFrame(fx.bounds());
+            content.setAutoresizingMask(fill);
         }
         return true;
     }
