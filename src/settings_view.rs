@@ -133,8 +133,8 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 
     section(ui, crate::icon::MIC, "Speech to text");
     row(ui, "Engine", "Where your recordings are turned into text.", 300.0, |ui| {
-        changed |= ui.radio_value(&mut app.s.speech_engine, SpeechEngine::WhisperLocal, "whisper.cpp on this Mac").changed();
-        changed |= ui.radio_value(&mut app.s.speech_engine, SpeechEngine::OpenAiCompatible, "OpenAI-compatible server").changed();
+        changed |= crate::views::kit_radio(ui, &mut app.s.speech_engine, SpeechEngine::WhisperLocal, "whisper.cpp on this Mac").changed();
+        changed |= crate::views::kit_radio(ui, &mut app.s.speech_engine, SpeechEngine::OpenAiCompatible, "OpenAI-compatible server").changed();
     });
     match app.s.speech_engine {
         SpeechEngine::WhisperLocal => {
@@ -220,9 +220,9 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 
     section(ui, crate::icon::WAND, "Text clean-up");
     row(ui, "Engine", "What tidies up, translates and answers.", 300.0, |ui| {
-        changed |= ui.radio_value(&mut app.s.text_engine, TextEngine::Ollama, "Ollama on this Mac").changed();
-        changed |= ui.radio_value(&mut app.s.text_engine, TextEngine::OpenAiCompatible, "OpenAI-compatible server").changed();
-        changed |= ui.radio_value(&mut app.s.text_engine, TextEngine::Off, "Off — paste exactly what I said").changed();
+        changed |= crate::views::kit_radio(ui, &mut app.s.text_engine, TextEngine::Ollama, "Ollama on this Mac").changed();
+        changed |= crate::views::kit_radio(ui, &mut app.s.text_engine, TextEngine::OpenAiCompatible, "OpenAI-compatible server").changed();
+        changed |= crate::views::kit_radio(ui, &mut app.s.text_engine, TextEngine::Off, "Off — paste exactly what I said").changed();
     });
     match app.s.text_engine {
         TextEngine::Ollama => {
@@ -447,13 +447,13 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     section(ui, crate::icon::CLIPBOARD, "Output");
     let mut c = false;
     row(ui, "Paste into the app I'm using", "Otherwise the text is only copied.", 204.0, |ui| {
-        c |= ui.checkbox(&mut app.s.auto_paste, "").changed();
+        c |= crate::views::kit_checkbox(ui, &mut app.s.auto_paste).changed();
     });
     row(ui, "Keep my clipboard", "Put back what was on the clipboard after pasting.", 204.0, |ui| {
-        c |= ui.checkbox(&mut app.s.restore_clipboard, "").changed();
+        c |= crate::views::kit_checkbox(ui, &mut app.s.restore_clipboard).changed();
     });
     row(ui, "Show floating indicator", "A small pill at the bottom of the screen while listening.", 204.0, |ui| {
-        c |= ui.checkbox(&mut app.s.show_indicator, "").changed();
+        c |= crate::views::kit_checkbox(ui, &mut app.s.show_indicator).changed();
     });
     if c {
         app.changed();
@@ -600,13 +600,13 @@ fn personal_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     section(ui, crate::icon::ERASER, "Clean-up");
     let mut c = false;
     row(ui, "Remove filler words", "Drops um, uh, like, you know.", 60.0, |ui| {
-        c |= ui.checkbox(&mut app.s.remove_fillers, "").changed();
+        c |= crate::views::kit_checkbox(ui, &mut app.s.remove_fillers).changed();
     });
     row(ui, "Follow my corrections", "\"Tuesday, no wait, Wednesday\" becomes \"Wednesday\".", 60.0, |ui| {
-        c |= ui.checkbox(&mut app.s.fix_corrections, "").changed();
+        c |= crate::views::kit_checkbox(ui, &mut app.s.fix_corrections).changed();
     });
     row(ui, "Auto-format", "Turns spoken lists into bullet points and splits paragraphs.", 60.0, |ui| {
-        c |= ui.checkbox(&mut app.s.auto_format, "").changed();
+        c |= crate::views::kit_checkbox(ui, &mut app.s.auto_format).changed();
     });
     section(ui, crate::icon::PENCIL_LINE, "Your own instructions");
     ui.label(t("Anything else your text model should always do, e.g. \"Use British spelling.\"", 13.5, theme::MUTED));

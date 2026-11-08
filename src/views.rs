@@ -92,12 +92,22 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     ui.label(para(body, 13.0, fg));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let btn = egui::Button::new(d("MANAGE MODELS", 11.0, fg))
-                        .fill(fill)
-                        .stroke(Stroke::new(2.0, fg))
-                        .corner_radius(8)
-                        .min_size(vec2(152.0, 30.0));
-                    if ui.add(btn).clicked() {
+                    // Painted rather than an egui Button: giving a Button an
+                    // explicit fill and stroke freezes it, so it never showed
+                    // a hover. The kit inverts these on hover.
+                    let (br, bresp) = ui.allocate_exact_size(vec2(152.0, 30.0), Sense::click());
+                    let hot = bresp.hovered();
+                    let p = ui.painter();
+                    p.rect_filled(br, 8.0, if hot { fg } else { fill });
+                    p.rect_stroke(br, 8.0, Stroke::new(2.0, fg), egui::StrokeKind::Inside);
+                    p.text(
+                        br.center(),
+                        Align2::CENTER_CENTER,
+                        "MANAGE MODELS",
+                        FontId::new(11.0, theme::display()),
+                        if hot { fill } else { fg },
+                    );
+                    if bresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         app.settings_tab = Some(SettingsTab::Models);
                         app.refresh_health(ui.ctx());
                     }
@@ -247,6 +257,59 @@ fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
         }
         other => draw_icon(p, other, c, color),
     }
+}
+
+/// The kit's checkbox (.box) and radio (.dot).
+///
+/// Ticking one presses it onto its own shadow, which is how .inspect behaves
+/// when it turns on, so the control looks pushed in rather than merely filled.
+fn kit_toggle(ui: &mut egui::Ui, on: bool, round: bool) -> egui::Response {
+    let (slot, resp) = ui.allocate_exact_size(vec2(25.0, 25.0), Sense::click());
+    let b = Rect::from_min_size(slot.min, vec2(22.0, 22.0));
+    let radius = if round { 11.0 } else { 7.0 };
+    let p = ui.painter();
+    if on {
+        let b = b.translate(vec2(2.0, 3.0));
+        p.rect_filled(b, radius, theme::INK);
+        let c = b.center();
+        if round {
+            p.circle_filled(c, 4.5, theme::PAPER);
+        } else {
+            p.add(egui::Shape::line(
+                vec![pos2(c.x - 4.6, c.y - 0.2), pos2(c.x - 1.4, c.y + 3.2), pos2(c.x + 4.8, c.y - 3.8)],
+                Stroke::new(2.6, theme::PAPER),
+            ));
+        }
+    } else {
+        p.rect_filled(b.translate(vec2(2.0, 3.0)), radius, theme::INK);
+        p.rect_filled(b, radius, if resp.hovered() { theme::PAPER } else { theme::SURFACE });
+        p.rect_stroke(b, radius, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+pub fn kit_checkbox(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let mut r = kit_toggle(ui, *on, false);
+    if r.clicked() {
+        *on = !*on;
+        r.mark_changed();
+    }
+    r
+}
+
+pub fn kit_radio<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, value: T, label: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        let on = *current == value;
+        let mut r = kit_toggle(ui, on, true);
+        ui.add_space(3.0);
+        let lr = ui.label(m(label, 13.0, theme::TEXT)).interact(Sense::click());
+        if lr.clicked() || r.clicked() {
+            *current = value;
+            r.mark_changed();
+        }
+        r
+    })
+    .inner
 }
 
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
