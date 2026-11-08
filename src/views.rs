@@ -989,19 +989,6 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
         app.settings_tab = Some(SettingsTab::Models);
         app.refresh_health(ui.ctx());
     }
-    ui.add_space(30.0);
-    // Right-aligned to the card, not to the column: the start button is wider
-    // than everything else, and aligning to that put this under the scrollbar.
-    let card_w = card.response.rect.width();
-    ui.scope(|ui| {
-        ui.set_width(card_w);
-        ui.with_layout(Layout::top_down(Align::Max), |ui| {
-            if link(ui, "Check models").clicked() {
-                app.refresh_health(ui.ctx());
-                app.notify("Checking your models…", false);
-            }
-        });
-    });
 }
 
 pub fn kbd(ui: &mut egui::Ui, k: &str) {
