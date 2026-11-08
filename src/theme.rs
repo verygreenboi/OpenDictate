@@ -158,7 +158,7 @@ pub fn install(ctx: &egui::Context) {
     let v = &mut style.visuals;
     v.panel_fill = BG;
     v.window_fill = Color32::from_rgb(0x34, 0x34, 0x34);
-    v.extreme_bg_color = Color32::from_rgb(0x1E, 0x1E, 0x1E);
+    v.extreme_bg_color = PAPER;
     v.override_text_color = Some(TEXT);
     v.selection.bg_fill = ACCENT;
     v.hyperlink_color = ACCENT;
@@ -179,6 +179,9 @@ pub fn install(ctx: &egui::Context) {
         w.corner_radius = egui::CornerRadius::same(11);
     }
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, LINE);
+    // The kit's slider is a plain track with an ink thumb; egui's trailing
+    // fill would paint it in the selection colour, which is the accent blue.
+    style.visuals.slider_trailing_fill = false;
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.button_padding = egui::vec2(13.0, 7.0);
     style.spacing.interact_size.y = 30.0;

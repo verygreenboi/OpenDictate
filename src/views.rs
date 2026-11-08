@@ -245,7 +245,7 @@ fn logo(ui: &mut egui::Ui) {
 ///
 /// The sprite holds twelve icons and has neither a clock nor a book, so those
 /// two are drawn to the same recipe rather than left in another family.
-fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
+pub fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
     let k = 19.0 / 24.0;
     let at = |x: f32, y: f32| pos2(c.x + (x - 12.0) * k, c.y + (y - 12.0) * k);
     let st = Stroke::new(2.3 * k, color);
@@ -379,6 +379,59 @@ pub fn bullets(ui: &mut egui::Ui, items: &[&str], size: f32, color: Color32) {
         });
         ui.add_space(4.0);
     }
+}
+
+/// The kit's .status: a state in a word, tinted by the kit's three colours.
+#[derive(Clone, Copy, PartialEq)]
+pub enum State {
+    Ok,
+    Warn,
+    Bad,
+}
+
+pub fn status(ui: &mut egui::Ui, state: State, text: impl Into<String>) {
+    let (tint, glyph) = match state {
+        State::Ok => (theme::GREEN, "star"),
+        State::Warn => (theme::AMBER, "bell"),
+        State::Bad => (theme::RED, "x"),
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 7.0;
+        let (ir, _) = ui.allocate_exact_size(vec2(15.0, 15.0), Sense::hover());
+        kit_icon(ui.painter(), glyph, ir.center(), tint);
+        ui.label(m(text, 12.0, tint));
+    });
+}
+
+/// The kit's .progress: a caption, a figure, and a bar you can read.
+pub fn progress(ui: &mut egui::Ui, caption: &str, figure: &str, frac: f32, w: f32) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(w, 12.0), Sense::hover());
+            let p = ui.painter();
+            let spaced: String = caption.to_uppercase().chars().flat_map(|c| [c, ' ']).collect();
+            p.text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, spaced.trim_end(), FontId::new(9.0, theme::bold()), theme::FAINT);
+            p.text(pos2(r.right(), r.center().y), Align2::RIGHT_CENTER, figure, FontId::new(12.0, theme::display()), theme::TEXT);
+        });
+        let (r, _) = ui.allocate_exact_size(vec2(w, 11.0), Sense::hover());
+        let p = ui.painter();
+        p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * frac.clamp(0.0, 1.0), r.height())), 5.0, theme::INK);
+        p.rect_stroke(r, 5.0, Stroke::new(2.5, theme::INK), egui::StrokeKind::Inside);
+    });
+}
+
+/// The kit's .link: ink, underlined, thicker when pointed at.
+pub fn link(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let font = FontId::new(12.5, theme::medium());
+    let g = ui.painter().layout_no_wrap(text.to_string(), font.clone(), theme::TEXT);
+    let (r, resp) = ui.allocate_exact_size(vec2(g.rect.width(), g.rect.height() + 6.0), Sense::click());
+    let p = ui.painter();
+    p.text(pos2(r.left(), r.top()), Align2::LEFT_TOP, text, font, theme::TEXT);
+    let t = if resp.hovered() { 3.0 } else { 2.0 };
+    let y = r.top() + g.rect.height() + 1.0;
+    p.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(t, theme::TEXT));
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
@@ -816,7 +869,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.add_space(30.0);
     ui.with_layout(Layout::top_down(Align::Max), |ui| {
         ui.label(t(format!("Version v{VERSION}"), 12.0, theme::MUTED));
-        if ui.add(egui::Label::new(t("Check models", 12.0, theme::MUTED).underline()).sense(Sense::click())).clicked() {
+        if link(ui, "Check models").clicked() {
             app.refresh_health(ui.ctx());
             app.notify("Checking your models…", false);
         }

@@ -81,33 +81,49 @@ pub fn settings_window(app: &mut DictateApp, ctx: &egui::Context) {
     }
 }
 
+/// The kit's .fsec: icon, title in the display face, a hairline under both.
 fn section(ui: &mut egui::Ui, icon: &str, title: &str) {
-    ui.add_space(18.0);
-    ui.label(m(format!("{icon}  {title}"), 16.5, Color32::from_rgb(0xC8, 0xC8, 0xC8)));
+    ui.add_space(22.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 9.0;
+        let (ir, _) = ui.allocate_exact_size(vec2(19.0, 19.0), Sense::hover());
+        crate::views::kit_icon(ui.painter(), icon, ir.center(), theme::MUTED);
+        ui.label(d(title, 15.0, theme::TEXT));
+    });
+    ui.add_space(9.0);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
+    ui.painter().rect_filled(r, 0.0, theme::LINE);
     ui.add_space(4.0);
-    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, Color32::from_rgb(0x46, 0x46, 0x46));
-    ui.add_space(12.0);
 }
 
 /// A settings row: title and description on the left, the control on the right.
+/// The kit's .frow: title, helper text, control on the right, with a hairline
+/// above each row after the first.
+///
+/// No border of its own. Rows sit inside an already outlined sheet, and a box
+/// around each one repeats the mistake that made the segmented control look
+/// wrong.
 fn row(ui: &mut egui::Ui, title: &str, desc: &str, control_w: f32, control: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(13.0);
     ui.horizontal_top(|ui| {
-        let left = ui.available_width() - control_w - 16.0;
+        let left = ui.available_width() - control_w - 18.0;
         ui.vertical(|ui| {
             ui.set_width(left);
-            ui.label(m(title, 14.0, theme::TEXT));
+            ui.spacing_mut().item_spacing.y = 3.0;
+            ui.label(m(title, 13.5, theme::TEXT));
             if !desc.is_empty() {
-                ui.label(para(desc, 13.5, Color32::from_rgb(0xB8, 0xB8, 0xB8)));
+                ui.label(para(desc, 12.0, theme::MUTED));
             }
         });
-        ui.add_space(16.0);
+        ui.add_space(18.0);
         ui.vertical(|ui| {
             ui.set_width(control_w);
             control(ui);
         });
     });
     ui.add_space(14.0);
+    let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.5), Sense::hover());
+    ui.painter().rect_filled(r, 0.0, theme::LINE);
 }
 
 fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
@@ -146,9 +162,11 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             row(ui, "whisper.cpp program", "The whisper-cli command (brew install whisper-cpp).", 300.0, |ui| {
                 changed |= ui.add(egui::TextEdit::singleline(&mut app.s.whisper_bin).desired_width(300.0)).changed();
                 match &health.whisper_bin {
-                    Some(p) => ui.label(t(format!("{} Found at {}", crate::icon::CHECK, p.display()), 12.5, theme::GREEN)),
-                    None if health.checked => ui.label(t(format!("{} Not found", crate::icon::X), 12.5, theme::RED)),
-                    None => ui.label(t("Checking…", 12.5, theme::MUTED)),
+                    Some(p) => crate::views::status(ui, crate::views::State::Ok, format!("Found at {}", p.display())),
+                    None if health.checked => crate::views::status(ui, crate::views::State::Bad, "Not found"),
+                    None => {
+                        ui.label(t("Checking…", 12.5, theme::MUTED));
+                    }
                 };
             });
             let local = engines::local_whisper_models();
@@ -183,14 +201,14 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                                 if f == choice.file {
                                     let p = p.lock().unwrap();
                                     let frac = if p.total > 0 { p.done as f32 / p.total as f32 } else { 0.0 };
-                                    ui.add(egui::ProgressBar::new(frac).desired_width(180.0).show_percentage());
+                                    crate::views::progress(ui, "Downloading", &format!("{:.0}%", frac * 100.0), frac, 180.0);
                                     return;
                                 }
                             }
                             if have {
                                 let path = crate::settings::models_dir().join(choice.file).to_string_lossy().into_owned();
                                 if app.s.whisper_model == path {
-                                    ui.label(t(format!("{} In use", crate::icon::CHECK), 13.0, theme::GREEN));
+                                    crate::views::status(ui, crate::views::State::Ok, "In use");
                                 } else if ui.button("Use").clicked() {
                                     app.s.whisper_model = path;
                                     changed = true;
@@ -235,11 +253,11 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 changed |= ui.add(egui::TextEdit::singleline(&mut app.s.ollama_url).desired_width(300.0)).changed();
                 match &health.ollama {
                     Some(Ok(list)) => {
-                        ui.label(t(format!("{} Running · {} model{}", crate::icon::CHECK, list.len(), if list.len() == 1 { "" } else { "s" }), 12.5, theme::GREEN));
+                        crate::views::status(ui, crate::views::State::Ok, format!("Running · {} model{}", list.len(), if list.len() == 1 { "" } else { "s" }));
                     }
                     Some(Err(_)) => {
                         ui.horizontal(|ui| {
-                            ui.label(t(format!("{} Not running", crate::icon::X), 12.5, theme::RED));
+                            crate::views::status(ui, crate::views::State::Bad, "Not running");
                             if ui.small_button("Start Ollama").clicked() {
                                 match engines::start_ollama() {
                                     Ok(()) => app.notify("Starting Ollama…", false),
@@ -296,7 +314,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     if f.starts_with("ollama:") {
                         let p = p.lock().unwrap();
                         let frac = if p.total > 0 { p.done as f32 / p.total as f32 } else { 0.0 };
-                        ui.add(egui::ProgressBar::new(frac).desired_width(300.0).text(p.status.clone()));
+                        crate::views::progress(ui, &p.status, &format!("{:.0}%", frac * 100.0), frac, 300.0);
                     }
                 }
             });
@@ -424,7 +442,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         });
     }
     for e in app.hotkey_errors.clone() {
-        ui.label(t(format!("{} {e}", crate::icon::WARN), 12.5, theme::RED));
+        crate::views::status(ui, crate::views::State::Bad, format!("{e}"));
     }
     if keys_changed {
         app.changed();
@@ -492,7 +510,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             }
         });
         if !mic.is_empty() && !app.mics.contains(&mic) {
-            ui.label(t(format!("{} This microphone isn't connected; the system default is used.", crate::icon::WARN), 12.5, theme::RED));
+            crate::views::status(ui, crate::views::State::Warn, "This microphone isn't connected; the system default is used.");
         }
         if mic != app.s.microphone {
             app.s.microphone = mic;
@@ -523,12 +541,12 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         }
         if let Some(r) = &app.mic_test {
             if let Some(e) = r.error() {
-                ui.label(t(format!("{} The microphone stopped: {e}", crate::icon::WARN), 12.5, theme::RED));
+                crate::views::status(ui, crate::views::State::Bad, format!("The microphone stopped: {e}"));
             } else if r.sample_count() == 0 && r.elapsed() > 1.5 {
                 ui.label(para(format!("{} No sound is arriving from this microphone. Try another one or reconnect it.", crate::icon::WARN), 12.5, theme::RED));
             } else if r.elapsed() > 1.5 && r.peak() == 0.0 {
                 // Exact digital silence on a live device is what macOS sends when access is blocked.
-                ui.label(t(format!("{} macOS is blocking the microphone (it only sends silence).", crate::icon::WARN), 12.5, theme::RED));
+                crate::views::status(ui, crate::views::State::Bad, "macOS is blocking the microphone (it only sends silence).");
                 if ui.small_button("Open microphone privacy settings").clicked() {
                     open_mic_privacy();
                 }
