@@ -308,7 +308,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                                 let path = crate::settings::models_dir().join(choice.file).to_string_lossy().into_owned();
                                 if app.s.whisper_model == path {
                                     crate::views::status(ui, crate::views::State::Ok, "In use");
-                                } else if ui.button("Use").clicked() {
+                                } else if crate::views::btn(ui, "Use").clicked() {
                                     app.s.whisper_model = path;
                                     changed = true;
                                 }
@@ -354,7 +354,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     Some(Err(_)) => {
                         ui.horizontal(|ui| {
                             crate::views::status(ui, crate::views::State::Bad, "Not running");
-                            if ui.small_button("Start Ollama").clicked() {
+                            if crate::views::btn(ui, "Start Ollama").clicked() {
                                 match engines::start_ollama() {
                                     Ok(()) => app.notify("Starting Ollama…", false),
                                     Err(e) => app.notify(e, true),
@@ -430,7 +430,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                                     .fill(theme::SURFACE)
                                     .stroke(Stroke::new(2.0, theme::FAINT)),
                             );
-                        } else if ui.button(sug).clicked() {
+                        } else if crate::views::btn(ui, sug).clicked() {
                             app.pull_name = sug.into();
                         }
                     }
@@ -455,7 +455,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                         ("OpenRouter", "https://openrouter.ai/api/v1"),
                         ("Groq", "https://api.groq.com/openai/v1"),
                     ] {
-                        if ui.small_button(name).clicked() {
+                        if crate::views::btn(ui, name).clicked() {
                             app.s.text_url = url.into();
                             changed = true;
                         }
@@ -485,7 +485,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     }
                 }
                 ui.add_space(6.0);
-                if ui.button("Fetch model list").clicked() {
+                if crate::views::btn(ui, "Fetch model list").clicked() {
                     app.refresh_health(&ctx);
                 }
                 if let Some(Err(e)) = &health.remote_text {
@@ -570,8 +570,7 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 keys_changed = true;
             }
             let label = if app.capturing_key == Some(a) { "Press keys…" } else { "Add another" };
-            let btn = egui::Button::new(t(label, 14.0, theme::TEXT)).stroke(Stroke::new(1.0, Color32::from_rgb(0x55, 0x55, 0x55))).fill(Color32::TRANSPARENT);
-            if ui.add(btn).clicked() {
+            if crate::views::btn(ui, label).clicked() {
                 app.capturing_key = Some(a);
             }
         });
@@ -650,7 +649,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             app.s.microphone = mic;
             changed = true;
         }
-        if ui.small_button("Refresh list").clicked() {
+        if crate::views::btn(ui, "Refresh list").clicked() {
             app.refresh_mics();
         }
     });
@@ -681,7 +680,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
             } else if r.elapsed() > 1.5 && r.peak() == 0.0 {
                 // Exact digital silence on a live device is what macOS sends when access is blocked.
                 crate::views::status(ui, crate::views::State::Bad, "macOS is blocking the microphone (it only sends silence).");
-                if ui.small_button("Open microphone privacy settings").clicked() {
+                if crate::views::btn(ui, "Open microphone privacy settings").clicked() {
                     open_mic_privacy();
                 }
             } else {
@@ -708,7 +707,7 @@ fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         "macOS asks once whether Open Dictate may use the microphone. If you said no, or the bar never moves, switch Open Dictate on in Privacy & Security › Microphone, then quit and reopen it.",
         260.0,
         |ui| {
-            if ui.button("Open microphone privacy settings").clicked() {
+            if crate::views::btn(ui, "Open microphone privacy settings").clicked() {
                 open_mic_privacy();
             }
         },
@@ -819,7 +818,7 @@ fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     section(ui, crate::icon::FOLDER, "Your data");
     let dir = crate::settings::data_dir();
     ui.label(t(dir.display().to_string(), 13.0, theme::MUTED));
-    if ui.button("Open folder").clicked() {
+    if crate::views::btn(ui, "Open folder").clicked() {
         let _ = std::process::Command::new("open").arg(&dir).spawn();
     }
     section(ui, crate::icon::CHART, "Totals");

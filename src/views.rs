@@ -529,6 +529,29 @@ pub fn slider(
     resp.on_hover_cursor(egui::CursorIcon::ResizeHorizontal)
 }
 
+/// The kit's .btn: its small secondary button, for the actions that hang off
+/// a control rather than carry a screen.
+///
+/// Surface with an ink edge, inverting to ink and paper when pointed at.
+/// Painted because the inversion needs the label to change colour with the
+/// fill, and egui takes button text from the global override.
+pub fn btn(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let font = FontId::new(13.5, theme::bold());
+    let g = ui.painter().layout_no_wrap(label.to_string(), font.clone(), theme::INK);
+    let (r, resp) = ui.allocate_exact_size(vec2(g.rect.width() + 26.0, g.rect.height() + 15.0), Sense::click());
+    let hot = resp.hovered();
+    let p = ui.painter();
+    p.rect_filled(r, 11.0, if hot { theme::INK } else { theme::SURFACE });
+    p.rect_stroke(
+        r,
+        11.0,
+        Stroke::new(2.5, if hot { theme::PAPER } else { theme::INK }),
+        egui::StrokeKind::Inside,
+    );
+    p.text(r.center(), Align2::CENTER_CENTER, label, font, if hot { theme::PAPER } else { theme::INK });
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
 fn sp_cap(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
