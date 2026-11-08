@@ -119,13 +119,15 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(m("What you need", 14.0, theme::TEXT));
-            ui.label(para(
-                "• Speech model (required): turns your voice into text. A downloaded Whisper model is all Dictate needs.\n\
-                 • Text model (optional): removes filler words, fixes corrections and formats. Translate and Ask anything need it. \
-                 Without one, Dictate pastes exactly what you said.",
+            crate::views::bullets(
+                ui,
+                &[
+                    "Speech model (required): turns your voice into text. A downloaded Whisper model is all Dictate needs.",
+                    "Text model (optional): removes filler words, fixes corrections and formats. Translate and Ask anything need it. Without one, Dictate pastes exactly what you said.",
+                ],
                 13.0,
                 Color32::from_rgb(0xD8, 0xDE, 0xF0),
-            ));
+            );
         });
     let ctx = ui.ctx().clone();
     let health = app.health.lock().unwrap().clone();

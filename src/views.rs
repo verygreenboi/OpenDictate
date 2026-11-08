@@ -356,6 +356,26 @@ pub fn kit_radio<T: PartialEq + Copy>(ui: &mut egui::Ui, current: &mut T, value:
     .inner
 }
 
+/// A list whose wrapped lines line up under the text, not under the bullet.
+///
+/// egui has no hanging indent: a bullet typed into the string is just another
+/// character, so the second line returns to the margin and the list stops
+/// looking like one. The marker gets its own column instead.
+pub fn bullets(ui: &mut egui::Ui, items: &[&str], size: f32, color: Color32) {
+    for item in items {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let (dot, _) = ui.allocate_exact_size(vec2(15.0, size * 1.5), Sense::hover());
+            ui.painter().circle_filled(pos2(dot.left() + 5.0, dot.top() + size * 0.78), 2.2, color);
+            ui.vertical(|ui| {
+                ui.set_width(ui.available_width());
+                ui.label(para(*item, size, color));
+            });
+        });
+        ui.add_space(4.0);
+    }
+}
+
 /// The kit's .sp-cap: a group heading, tiny and widely tracked.
 fn sp_cap(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
