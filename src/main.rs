@@ -120,6 +120,9 @@ fn main() -> eframe::Result<()> {
                 .with_title("Open Dictate")
                 .with_inner_size([1360.0, 920.0])
                 .with_min_inner_size([980.0, 640.0])
+                // Matches the real window, so a screenshot shows the page at
+                // the alpha it actually has rather than flattened onto black.
+                .with_transparent(true)
         } else {
             eframe::egui::ViewportBuilder::default()
                 .with_title("Open Dictate")

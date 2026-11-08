@@ -122,10 +122,15 @@ pub struct DictateApp {
     quitting: bool,
 }
 
+/// Whether the OS is in light mode, or None before any window exists.
+fn system_light(ctx: &egui::Context) -> Option<bool> {
+    ctx.system_theme().map(|t| t == egui::Theme::Light)
+}
+
 impl DictateApp {
     pub fn new(cc: &eframe::CreationContext<'_>, shot: Option<PathBuf>) -> Self {
         let mut s = settings::load_settings();
-        theme::set_light(s.appearance.is_light());
+        theme::set_light(s.appearance.is_light(system_light(&cc.egui_ctx)));
         theme::install(&cc.egui_ctx);
         let (jobs_tx, jobs_rx) = channel();
         let (hk_tx, hk_rx) = channel();
@@ -669,7 +674,10 @@ impl DictateApp {
         let builder = egui::ViewportBuilder::default()
             .with_title("Open Dictate")
             .with_inner_size([1360.0, 920.0])
-            .with_min_inner_size([980.0, 640.0]);
+            .with_min_inner_size([980.0, 640.0])
+            // The page behind the cards is painted with alpha, so the window
+            // has to be able to carry it.
+            .with_transparent(true);
         let focus = std::mem::take(&mut self.focus_main);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("main"), builder, |ui, _| {
             let vctx = ui.ctx().clone();
@@ -776,6 +784,13 @@ impl DictateApp {
 
 impl eframe::App for DictateApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // On System this follows the OS while the app is open, and it is also
+        // what applies the switch in Settings a frame after it is clicked.
+        let light = self.s.appearance.is_light(system_light(ctx));
+        if light != theme::is_light() {
+            theme::set_light(light);
+            theme::apply_style(ctx);
+        }
         self.window_lifecycle(ctx);
         while let Ok(e) = self.hk_rx.try_recv() {
             if self.capturing_key.is_none() {

@@ -104,6 +104,15 @@ tone!(
     TRACK, c(0x31, 0x30, 0x2A), c(0xE2, 0xE1, 0xDD)
 );
 
+/// The page behind everything, let through a little. Cards, panels and the
+/// side panel keep their own opaque fills, so only the paper between them
+/// takes on what is behind the window.
+#[allow(non_snake_case)]
+pub fn BG_SHEER() -> Color32 {
+    let p = PAPER();
+    Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 214)
+}
+
 /// The streak ramp, coldest first. Dark climbs towards the kit's blue; light
 /// climbs away from the paper towards its deep one.
 #[allow(non_snake_case)]

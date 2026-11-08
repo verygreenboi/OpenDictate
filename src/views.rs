@@ -19,7 +19,7 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
         .frame(egui::Frame::new().fill(theme::BG()).inner_margin(Margin { left: 10, right: 8, top: 10, bottom: 10 }))
         .show(ui, |ui| sidebar(app, ui));
 
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG())).show(ui, |ui| {
+    egui::CentralPanel::default().frame(egui::Frame::new().fill(theme::BG_SHEER())).show(ui, |ui| {
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             let full = ui.available_width();
             let width = (full - 80.0).clamp(560.0, 1080.0);

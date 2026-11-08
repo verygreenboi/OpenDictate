@@ -104,20 +104,28 @@ impl KeepHistory {
 /// twin; this picks which one the app wears.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum Appearance {
+    System,
     Dark,
     Light,
 }
 
 impl Appearance {
-    pub const ALL: [Appearance; 2] = [Appearance::Dark, Appearance::Light];
+    pub const ALL: [Appearance; 3] = [Appearance::System, Appearance::Dark, Appearance::Light];
     pub fn label(self) -> &'static str {
         match self {
+            Appearance::System => "System",
             Appearance::Dark => "Dark",
             Appearance::Light => "Light",
         }
     }
-    pub fn is_light(self) -> bool {
-        self == Appearance::Light
+    /// `system_light` is what the OS is set to, which is only known once a
+    /// window exists; before that it reads as None and this falls to dark.
+    pub fn is_light(self, system_light: Option<bool>) -> bool {
+        match self {
+            Appearance::System => system_light.unwrap_or(false),
+            Appearance::Dark => false,
+            Appearance::Light => true,
+        }
     }
 }
 
@@ -191,14 +199,14 @@ pub struct Settings {
     pub hide_text_model_notice: bool,
     pub typing_wpm: f32,
     pub keep_history: KeepHistory,
-    #[serde(default = "dark")]
+    #[serde(default = "system")]
     pub appearance: Appearance,
 
     pub dictionary: Vec<DictWord>,
 }
 
-fn dark() -> Appearance {
-    Appearance::Dark
+fn system() -> Appearance {
+    Appearance::System
 }
 
 impl Settings {
@@ -258,7 +266,7 @@ impl Default for Settings {
             hide_text_model_notice: false,
             typing_wpm: 40.0,
             keep_history: KeepHistory::Forever,
-            appearance: Appearance::Dark,
+            appearance: Appearance::System,
 
             dictionary: Vec::new(),
         }

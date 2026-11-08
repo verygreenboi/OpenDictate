@@ -522,18 +522,11 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 
 fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     section(ui, crate::icon::PALETTE, "Appearance");
-    let mut light = app.s.appearance.is_light();
-    crate::views::pill_tabs(
-        ui,
-        &mut light,
-        &[(false, Appearance::Dark.label()), (true, Appearance::Light.label())],
-    );
-    if light != app.s.appearance.is_light() {
-        app.s.appearance = if light { Appearance::Light } else { Appearance::Dark };
-        theme::set_light(light);
-        // The widget styles are built from the palette once and cached, so
-        // they have to be rebuilt rather than left on the old colours.
-        theme::apply_style(ui.ctx());
+    let mut want = app.s.appearance;
+    let choices: Vec<(Appearance, &str)> = Appearance::ALL.iter().map(|a| (*a, a.label())).collect();
+    crate::views::pill_tabs(ui, &mut want, &choices);
+    if want != app.s.appearance {
+        app.s.appearance = want;
         app.changed();
     }
     ui.add_space(14.0);
