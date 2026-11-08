@@ -120,6 +120,9 @@ pub struct DictateApp {
     /// Set by the menu bar's Quit, so the close that follows is a real one
     /// rather than another hide.
     quitting: bool,
+    /// The backdrop blur can only be attached once the real window exists,
+    /// which is a frame or two after it is asked for.
+    blurred: bool,
 }
 
 /// Whether the OS is in light mode, or None before any window exists.
@@ -131,6 +134,11 @@ impl DictateApp {
     pub fn new(cc: &eframe::CreationContext<'_>, shot: Option<PathBuf>) -> Self {
         let mut s = settings::load_settings();
         theme::set_light(s.appearance.is_light(system_light(&cc.egui_ctx)));
+        // Launch Services caches a bundle's icon against its path, so an app
+        // that once had none can keep the generic tile however correct the
+        // bundle becomes. Setting it here does not go through that cache.
+        #[cfg(target_os = "macos")]
+        crate::macos_look::set_dock_icon(include_bytes!("../assets/AppIcon.png"));
         theme::install(&cc.egui_ctx);
         let (jobs_tx, jobs_rx) = channel();
         let (hk_tx, hk_rx) = channel();
@@ -190,6 +198,7 @@ impl DictateApp {
             window_open: true,
             focus_main: false,
             quitting: false,
+            blurred: false,
         };
         // Lets a screenshot start on another screen: --page history|dictionary|models|settings|personal
         let args: Vec<String> = std::env::args().collect();
@@ -689,6 +698,12 @@ impl DictateApp {
             }
             crate::views::draw(self, ui);
         });
+        #[cfg(target_os = "macos")]
+        if !self.blurred {
+            // 300 is wide enough to tell the real window from the 1x1 root
+            // anchor, which carries the same title.
+            self.blurred = crate::macos_look::blur_window(300.0);
+        }
     }
 
     fn indicator(&mut self, ctx: &egui::Context) {

@@ -110,7 +110,7 @@ tone!(
 #[allow(non_snake_case)]
 pub fn BG_SHEER() -> Color32 {
     let p = PAPER();
-    Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 214)
+    Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 184)
 }
 
 /// The streak ramp, coldest first. Dark climbs towards the kit's blue; light

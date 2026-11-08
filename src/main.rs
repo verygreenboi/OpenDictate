@@ -2,6 +2,8 @@ mod app;
 mod audio;
 mod engines;
 mod icon;
+#[cfg(target_os = "macos")]
+mod macos_look;
 mod settings;
 mod settings_view;
 mod stats;

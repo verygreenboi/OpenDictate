@@ -15,3 +15,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tray-icon = "0.26.1"
 ureq = { version = "3", features = ["json"] }
+
+# AppKit, for the two window things egui has no builder for: the backdrop
+# blur and the Dock tile. Both versions are already in the tree via winit.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication", "NSColor", "NSGraphics", "NSImage", "NSResponder",
+    "NSView", "NSVisualEffectView", "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSGeometry"] }
