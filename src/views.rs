@@ -246,7 +246,13 @@ fn logo(ui: &mut egui::Ui) {
 /// The sprite holds twelve icons and has neither a clock nor a book, so those
 /// two are drawn to the same recipe rather than left in another family.
 pub fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
-    let k = 19.0 / 24.0;
+    kit_icon_at(p, name, c, color, 19.0);
+}
+
+/// The same glyphs at a size of your choosing. The sprite is a 24 grid with a
+/// 2.3 stroke, and both scale together, so a small one stays in proportion.
+pub fn kit_icon_at(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32, size: f32) {
+    let k = size / 24.0;
     let at = |x: f32, y: f32| pos2(c.x + (x - 12.0) * k, c.y + (y - 12.0) * k);
     let st = Stroke::new(2.3 * k, color);
     let line = |a: (f32, f32), b: (f32, f32)| egui::Shape::line_segment([at(a.0, a.1), at(b.0, b.1)], st);
@@ -299,6 +305,22 @@ pub fn kit_icon(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32) {
         // .inspect button, which has no room here.
         "chev" => {
             p.add(poly(&[(9.5, 5.5), (16.0, 12.0), (9.5, 18.5)]));
+        }
+        // two sheets, one behind the other
+        "copy" => {
+            p.add(poly(&[(16.0, 8.0), (16.0, 4.5), (4.5, 4.5), (4.5, 16.0), (8.0, 16.0)]));
+            p.add(egui::Shape::rect_stroke(
+                egui::Rect::from_min_max(at(8.0, 8.0), at(19.5, 19.5)),
+                2.0 * k,
+                st,
+                egui::StrokeKind::Middle,
+            ));
+        }
+        // the overflow dots, filled rather than stroked
+        "more" => {
+            for x in [6.0, 12.0, 18.0] {
+                p.add(egui::Shape::circle_filled(at(x, 12.0), 1.7 * k, color));
+            }
         }
         // i-lens
         "lens" => {
@@ -1000,6 +1022,11 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     let card = theme::soft(theme::CARD_DIM, 14, 2.5, 3).inner_margin(Margin::same(12)).show(ui, |ui| {
         ui.set_width(186.0 - 24.0);
         ui.horizontal(|ui| {
+            let all_ok = speech_ok && text_ok;
+            let (r, _) = ui.allocate_exact_size(vec2(17.0, 17.0), Sense::hover());
+            kit_icon_at(ui.painter(), if all_ok { "check" } else { "x" }, r.center(),
+                        if all_ok { theme::GREEN } else if speech_ok { theme::AMBER } else { theme::RED }, 16.0);
+            ui.add_space(3.0);
             ui.label(b(if speech_ok { "Ready" } else { "Not ready" }, 16.0, theme::TEXT));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(13.0, 13.0), Sense::hover());
@@ -1007,12 +1034,15 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
             });
         });
         ui.add_space(4.0);
+        // A tick is a stronger claim than a dot: it says set up, not present.
         // Speech is required, so a gap there is wrong; text clean-up is
         // optional, so a gap there has only been noticed.
         for (ok, name, missing) in [(speech_ok, speech, theme::RED), (text_ok, text, theme::AMBER)] {
             ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(8.0, 17.0), Sense::hover());
-                ui.painter().circle_filled(r.center(), 3.5, if ok { theme::GREEN } else { missing });
+                let (r, _) = ui.allocate_exact_size(vec2(14.0, 18.0), Sense::hover());
+                kit_icon_at(ui.painter(), if ok { "check" } else { "x" }, r.center(),
+                            if ok { theme::GREEN } else { missing }, 13.0);
+                ui.add_space(2.0);
                 ui.add(egui::Label::new(t(name, 13.0, theme::MUTED)).truncate());
             });
         }
@@ -1126,7 +1156,8 @@ fn history(app: &mut DictateApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(b("History", 38.0, theme::TEXT));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.menu_button(t(crate::icon::ELLIPSIS, 18.0, theme::MUTED), |ui| {
+            let more = icon_button(ui, "more", "More");
+            egui::Popup::menu(&more).show(|ui| {
                 if ui.button("Copy all as text").clicked() {
                     let all = app.history.iter().rev().filter(|e| e.error.is_none()).map(|e| e.text.clone()).collect::<Vec<_>>().join("\n\n");
                     ui.ctx().copy_text(all);
@@ -1273,7 +1304,8 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                 }
             });
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                ui.menu_button(t(crate::icon::ELLIPSIS, 15.0, theme::MUTED), |ui| {
+                let more = icon_button(ui, "more", "More");
+                egui::Popup::menu(&more).show(|ui| {
                     if e.error.is_none() {
                         if ui.button("Copy").clicked() {
                             ui.ctx().copy_text(e.text.clone());
@@ -1302,7 +1334,7 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
                     if ui.add_enabled(app.busy.is_none(), btn).clicked() {
                         out = Some(RowAction::Retry);
                     }
-                } else if e.error.is_none() && ui.add(egui::Button::new(t("Copy", 13.0, theme::MUTED)).frame(false)).clicked() {
+                } else if e.error.is_none() && icon_button(ui, "copy", "Copy").clicked() {
                     ui.ctx().copy_text(e.text.clone());
                     app.notify("Copied", false);
                 }
