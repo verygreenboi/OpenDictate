@@ -349,34 +349,52 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                 }
             });
             let list = health.ollama.clone().and_then(|r| r.ok()).unwrap_or_default();
-            row(ui, "Model", "Small models (3–8B) are quick enough for dictation.", 300.0, |ui| {
-                egui::ComboBox::from_id_salt("omodel").width(300.0).selected_text(app.s.ollama_model.clone()).show_ui(ui, |ui| {
-                    if list.is_empty() {
-                        ui.label("No models found");
-                    }
-                    for name in &list {
-                        changed |= crate::views::combo_value(ui, &mut app.s.ollama_model, name.clone(), name).changed();
-                    }
-                });
-                changed |= ui.add(egui::TextEdit::singleline(&mut app.s.ollama_model).desired_width(300.0)).changed();
+            // One control, not two. This used to be a dropdown of installed
+            // models with a text field under it, both writing the same value,
+            // so it showed the answer twice and left it unclear which won.
+            row(ui, "Model", "Small models (3-8B) are quick enough for dictation.", 300.0, |ui| {
+                if list.is_empty() {
+                    crate::views::status(ui, crate::views::State::Warn, "Nothing downloaded yet - pick one below");
+                } else {
+                    egui::ComboBox::from_id_salt("omodel")
+                        .width(300.0)
+                        .selected_text(app.s.ollama_model.clone())
+                        .show_ui(ui, |ui| {
+                            for name in &list {
+                                changed |= crate::views::combo_value(ui, &mut app.s.ollama_model, name.clone(), name).changed();
+                            }
+                        });
+                }
             });
+            // Field and action first, suggestions under them and captioned.
+            // The three names used to sit on top looking like buttons that
+            // download, when all they do is fill the box.
             row(ui, "Download a model", "Any name from the Ollama library.", 300.0, |ui| {
                 ui.horizontal(|ui| {
-                    for sug in ["llama3.2:3b", "qwen2.5:3b", "gemma3:4b"] {
-                        if ui.small_button(sug).clicked() {
-                            app.pull_name = sug.into();
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut app.pull_name).hint_text("model name").desired_width(190.0));
+                    ui.add(egui::TextEdit::singleline(&mut app.pull_name).hint_text("model name").desired_width(186.0));
                     let busy = app.download.is_some();
-                    if ui.add_enabled(!busy && !app.pull_name.trim().is_empty(), egui::Button::new("Download")).clicked() {
+                    let ready = !busy && !app.pull_name.trim().is_empty();
+                    let btn = egui::Button::new(d("DOWNLOAD", 12.0, if ready { theme::PAPER } else { theme::FAINT }))
+                        .fill(if ready { theme::INK } else { theme::SURFACE })
+                        .stroke(Stroke::new(2.5, if ready { theme::PAPER } else { theme::FAINT }))
+                        .corner_radius(11);
+                    if ui.add_enabled(ready, btn).clicked() {
                         let p: engines::SharedProgress = Default::default();
                         engines::pull_ollama(&app.s.ollama_url, &app.pull_name, p.clone(), ctx.clone());
                         app.download = Some((format!("ollama:{}", app.pull_name.trim()), p));
                         app.s.ollama_model = app.pull_name.trim().to_string();
                         changed = true;
+                    }
+                });
+                ui.add_space(9.0);
+                let spaced: String = "SUGGESTIONS".chars().flat_map(|c| [c, ' ']).collect();
+                ui.label(b(spaced.trim_end(), 9.0, theme::FAINT));
+                ui.add_space(4.0);
+                ui.horizontal_wrapped(|ui| {
+                    for sug in ["llama3.2:3b", "qwen2.5:3b", "gemma3:4b"] {
+                        if ui.button(sug).clicked() {
+                            app.pull_name = sug.into();
+                        }
                     }
                 });
                 if let Some((f, p)) = &app.download {
