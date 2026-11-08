@@ -97,8 +97,15 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
             ui.set_width(w - 33.0);
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
-                    // Reserve for both actions: 168 + 6 + 104, plus air.
-                    let actions = if speech_ok { 296.0 } else { 184.0 };
+                    // Reserve for the actions: both are the width of the
+                    // widest label, so two cost twice one plus the gap.
+                    let widest = if speech_ok { "NO THANKS" } else { action };
+                    let one = ui.painter()
+                        .layout_no_wrap(widest.to_string(), FontId::new(11.0, theme::display()), fg)
+                        .rect
+                        .width()
+                        + 38.0;
+                    let actions = if speech_ok { one * 2.0 + 6.0 } else { one } + 16.0;
                     ui.set_width(w - 33.0 - actions);
                     ui.spacing_mut().item_spacing.y = 5.0;
                     ui.horizontal(|ui| {
@@ -112,25 +119,29 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     ui.label(para(body, 13.0, fg));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    // The kit gives .notice-btns buttons flex: 1 1 0, so they
+                    // share one width. Measure every label that will be shown
+                    // and size them all to the widest.
+                    let font = FontId::new(11.0, theme::display());
+                    let labels: &[&str] = if speech_ok { &[action, "NO THANKS"] } else { &[action] };
+                    let bw = labels
+                        .iter()
+                        .map(|l| ui.painter().layout_no_wrap(l.to_string(), font.clone(), fg).rect.width())
+                        .fold(0.0_f32, f32::max)
+                        + 38.0;
                     // Painted rather than egui Buttons: giving a Button an
                     // explicit fill and stroke freezes it, so it never showed
                     // a hover. The kit inverts these on hover.
-                    let mut notice_btn = |ui: &mut egui::Ui, label: &str, w: f32| {
-                        let (br, bresp) = ui.allocate_exact_size(vec2(w, 30.0), Sense::click());
+                    let mut notice_btn = |ui: &mut egui::Ui, label: &str| {
+                        let (br, bresp) = ui.allocate_exact_size(vec2(bw, 30.0), Sense::click());
                         let hot = bresp.hovered();
                         let p = ui.painter();
                         p.rect_filled(br, 8.0, if hot { fg } else { fill });
                         p.rect_stroke(br, 8.0, Stroke::new(2.0, fg), egui::StrokeKind::Inside);
-                        p.text(
-                            br.center(),
-                            Align2::CENTER_CENTER,
-                            label,
-                            FontId::new(11.0, theme::display()),
-                            if hot { fill } else { fg },
-                        );
+                        p.text(br.center(), Align2::CENTER_CENTER, label, font.clone(), if hot { fill } else { fg });
                         bresp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
                     };
-                    if notice_btn(ui, action, 168.0) {
+                    if notice_btn(ui, action) {
                         app.settings_tab = Some(SettingsTab::Models);
                         app.refresh_health(ui.ctx());
                     }
@@ -139,7 +150,7 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     // silently does nothing and no sign of why.
                     if speech_ok {
                         ui.add_space(6.0);
-                        if notice_btn(ui, "NO THANKS", 104.0) {
+                        if notice_btn(ui, "NO THANKS") {
                             app.s.hide_text_model_notice = true;
                             app.changed();
                         }
