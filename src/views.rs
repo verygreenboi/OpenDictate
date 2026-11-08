@@ -61,15 +61,30 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
 /// which are paper. On a dark page paper is the page, so the shadow would be
 /// invisible; it uses ink here, as the side panel does.
 fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
-    let (speech_ok, speech) = app.speech_ready();
+    let (speech_ok, _) = app.speech_ready();
     let (text_ok, text) = app.text_ready();
-    if speech_ok && text_ok {
+    // On a cold start the text model is still being looked for. Saying
+    // something is missing before we know would be a lie that fixes itself.
+    let still_looking = text.starts_with("Checking");
+    if speech_ok && (text_ok || still_looking) {
         return;
     }
-    let (fill, head, body) = if speech_ok {
-        (theme::Y1, "NEEDS A LOOK", format!("The text model is optional, and yours is missing: {text}"))
+    // The model names mean nothing to someone who never picked one. Say what
+    // works, what does not, and what it is for; the detail lives in Models.
+    let (fill, head, body, action) = if speech_ok {
+        (
+            theme::Y1,
+            "ONE OPTIONAL EXTRA",
+            "Dictation works. If you also want \"um\" and \"uh\" taken out and small slips tidied up, that needs one more download. Without it your words are pasted exactly as you said them.",
+            "SET IT UP",
+        )
     } else {
-        (theme::RED, "NOT READY", format!("Dictation needs a speech model before it can run. {speech}"))
+        (
+            theme::RED,
+            "DICTATION ISN'T READY YET",
+            "Your shortcut will not do anything yet. To turn what you say into text, Open Dictate needs a speech model downloaded onto this Mac.",
+            "SET UP DICTATION",
+        )
     };
     let fg = theme::PAPER;
     egui::Frame::new()
@@ -85,8 +100,11 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     ui.set_width(w - 33.0 - 170.0);
                     ui.spacing_mut().item_spacing.y = 5.0;
                     ui.horizontal(|ui| {
-                        kit_icon(ui.painter(), if speech_ok { "bell" } else { "x" }, pos2(ui.cursor().left() + 8.0, ui.cursor().top() + 7.0), fg);
-                        ui.add_space(22.0);
+                        // Allocated rather than painted at the cursor, so the
+                        // horizontal layout centres glyph and caption together.
+                        let (ir, _) = ui.allocate_exact_size(vec2(19.0, 19.0), Sense::hover());
+                        kit_icon(ui.painter(), if speech_ok { "bell" } else { "x" }, ir.center(), fg);
+                        ui.add_space(3.0);
                         ui.label(b(head, 10.0, fg));
                     });
                     ui.label(para(body, 13.0, fg));
@@ -95,7 +113,7 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     // Painted rather than an egui Button: giving a Button an
                     // explicit fill and stroke freezes it, so it never showed
                     // a hover. The kit inverts these on hover.
-                    let (br, bresp) = ui.allocate_exact_size(vec2(152.0, 30.0), Sense::click());
+                    let (br, bresp) = ui.allocate_exact_size(vec2(168.0, 30.0), Sense::click());
                     let hot = bresp.hovered();
                     let p = ui.painter();
                     p.rect_filled(br, 8.0, if hot { fg } else { fill });
@@ -103,7 +121,7 @@ fn setup_notice(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                     p.text(
                         br.center(),
                         Align2::CENTER_CENTER,
-                        "MANAGE MODELS",
+                        action,
                         FontId::new(11.0, theme::display()),
                         if hot { fill } else { fg },
                     );
