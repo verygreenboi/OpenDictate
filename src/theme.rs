@@ -118,8 +118,8 @@ pub fn BG_SHEER() -> Color32 {
     Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), SHEER)
 }
 
-/// How much paper the page keeps over whatever is behind the window.
-pub const SHEER: u8 = 184;
+/// How much paper the page keeps over whatever is behind the window. 0.6.
+pub const SHEER: u8 = 153;
 
 static BACKDROP: AtomicBool = AtomicBool::new(false);
 
