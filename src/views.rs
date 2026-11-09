@@ -186,22 +186,20 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     });
     ui.add_space(4.0);
 
-    let hist = app.history.len();
-    let words = app.s.dictionary.len();
     sp_cap(ui, "PAGES");
-    for (page, icon, label, badge) in [
-        (Page::Home, "home", "Home", None),
-        (Page::History, "clock", "History", (hist > 0).then(|| hist.to_string())),
-        (Page::Dictionary, "book", "Dictionary", (words > 0).then(|| words.to_string())),
+    for (page, icon, label) in [
+        (Page::Home, "home", "Home"),
+        (Page::History, "clock", "History"),
+        (Page::Dictionary, "book", "Dictionary"),
     ] {
-        if sp_item(ui, icon, label, app.page == page, badge).clicked() {
+        if sp_item(ui, icon, label, app.page == page).clicked() {
             app.page = page;
         }
     }
 
     // .sp-foot, laid out upwards from the bottom of the panel.
     ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-        if sp_item(ui, "gear", "Settings", app.settings_tab.is_some(), None).clicked() {
+        if sp_item(ui, "gear", "Settings", app.settings_tab.is_some()).clicked() {
             app.settings_tab = Some(SettingsTab::General);
         }
         ui.add_space(8.0);
@@ -604,10 +602,10 @@ fn sp_cap(ui: &mut egui::Ui, text: &str) {
 /// The kit's .sp-item. The chosen row is filled with ink like the primary
 /// button, and carries a yellow shadow rather than an ink one.
 pub fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool) -> egui::Response {
-    sp_item(ui, icon, label, active, None)
+    sp_item(ui, icon, label, active)
 }
 
-fn sp_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool, badge: Option<String>) -> egui::Response {
+fn sp_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool) -> egui::Response {
     let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
     let p = ui.painter();
     if active {
@@ -620,14 +618,6 @@ fn sp_item(ui: &mut egui::Ui, icon: &str, label: &str, active: bool, badge: Opti
     let fg = if active { theme::PAPER() } else { theme::TEXT() };
     kit_icon(p, icon, pos2(r.left() + 20.0, r.center().y), fg);
     p.text(pos2(r.left() + 40.0, r.center().y), Align2::LEFT_CENTER, label, FontId::new(13.0, theme::medium()), fg);
-    if let Some(n) = badge {
-        // .sp-badge: outlined in whatever the row's colour is, display face.
-        let galley = p.layout_no_wrap(n, FontId::new(11.0, theme::display()), fg);
-        let w = (galley.rect.width() + 14.0).max(22.0);
-        let br = Rect::from_center_size(pos2(r.right() - 12.0 - w / 2.0, r.center().y), vec2(w, 19.0));
-        p.rect_stroke(br, 9.0, Stroke::new(2.0, fg), egui::StrokeKind::Inside);
-        p.galley(pos2(br.center().x - galley.rect.width() / 2.0, br.center().y - galley.rect.height() / 2.0), galley, fg);
-    }
     ui.add_space(4.0);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
