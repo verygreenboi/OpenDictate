@@ -3,7 +3,7 @@
 
 use crate::audio::Recording;
 use crate::engines::{self, SharedProgress};
-use crate::settings::{self, Action, DictWord, Entry, Settings, TextEngine};
+use crate::settings::{self, Action, DictWord, Entry, Settings, TextEngine, Trigger};
 use crate::stats::Stats;
 use crate::theme;
 use crate::tray::Tray;
@@ -24,13 +24,6 @@ pub enum Page {
     Dictionary,
 }
 
-/// What a shortcut sets off. The three actions dictate into the app in
-/// front; a meeting records the room instead, so it is not one of them.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Trigger {
-    Act(Action),
-    Meeting,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SettingsTab {
@@ -90,7 +83,7 @@ pub struct DictateApp {
     registered: Vec<(HotKey, Trigger)>,
     hk_rx: Receiver<GlobalHotKeyEvent>,
     pub hotkey_errors: Vec<String>,
-    pub capturing_key: Option<Action>,
+    pub capturing_key: Option<Trigger>,
 
     /// Microphones found on the system, and the system default's name.
     pub mics: Vec<String>,
@@ -318,11 +311,10 @@ impl DictateApp {
         };
         let old: Vec<HotKey> = self.registered.drain(..).map(|(h, _)| h).collect();
         let _ = mgr.unregister_all(&old);
-        let mut want: Vec<(String, Trigger)> = Vec::new();
-        for a in Action::ALL {
-            want.extend(self.s.keys(a).iter().map(|k| (k.clone(), Trigger::Act(a))));
-        }
-        want.extend(self.s.meeting_keys.iter().map(|k| (k.clone(), Trigger::Meeting)));
+        let want: Vec<(String, Trigger)> = Trigger::ALL
+            .iter()
+            .flat_map(|t| self.s.trigger_keys(*t).iter().map(|k| (k.clone(), *t)))
+            .collect();
         for (k, trigger) in want {
             match k.parse::<HotKey>() {
                 Ok(h) => match mgr.register(h) {

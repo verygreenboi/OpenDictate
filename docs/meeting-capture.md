@@ -224,9 +224,6 @@ Three things only showed up by running a real meeting — forty seconds of
   sentence out of the speakers is also heard by the mic a few milliseconds
   later, and whisper sometimes writes it twice. Headphones avoid it. A real
   fix means keeping the two as separate channels rather than averaging them.
-- **The meeting shortcut has no settings row.** F16 is the default and can
-  only be changed by editing settings.json; the capture UI is built around
-  `Action`, and a meeting is not one.
 - **The microphone is whichever the system is set to**, not the one chosen
   in Audio input: that setting names a cpal device, and mapping the name
   onto a Core Audio id is a job of its own.

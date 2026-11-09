@@ -3,7 +3,7 @@
 
 use crate::app::{DictateApp, SettingsTab};
 use crate::engines;
-use crate::settings::{Action, Appearance, SpeechEngine, TextEngine, Tone};
+use crate::settings::{Action, Appearance, SpeechEngine, TextEngine, Tone, Trigger};
 use crate::theme::{self, b, d, m, para, t};
 use crate::views::{VERSION, icon_button, kbd, nav_item};
 use eframe::egui::{self, Align, Align2, Color32, CornerRadius, Layout, Margin, Sense, Stroke, vec2};
@@ -547,18 +547,27 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     }
     ui.add_space(14.0);
     let mut keys_changed = false;
-    for a in Action::ALL {
-        let mut desc = if app.s.hold_to_talk {
-            format!("Hold to keep {}, let go to finish.", a.verb())
-        } else {
-            format!("Press to start and stop {}.", a.verb())
+    for trigger in Trigger::ALL {
+        let desc = match trigger {
+            // A meeting runs for an hour; nobody holds a key down for that.
+            Trigger::Meeting => {
+                "Press to start recording a meeting, press again to stop. Hold to talk does not apply.".to_string()
+            }
+            Trigger::Act(a) => {
+                let mut d = if app.s.hold_to_talk {
+                    format!("Hold to keep {}, let go to finish.", a.verb())
+                } else {
+                    format!("Press to start and stop {}.", a.verb())
+                };
+                if a == Action::Ask {
+                    d.push_str(" Select text first to have it rewritten.");
+                }
+                d
+            }
         };
-        if a == Action::Ask {
-            desc.push_str(" Select text first to have it rewritten.");
-        }
-        row(ui, a.label(), &desc, 204.0, |ui| {
+        row(ui, trigger.label(), &desc, 204.0, |ui| {
             let mut remove = None;
-            for (i, k) in app.s.keys(a).iter().enumerate() {
+            for (i, k) in app.s.trigger_keys(trigger).iter().enumerate() {
                 egui::Frame::new()
                     .stroke(Stroke::new(2.0, theme::INK()))
                     .corner_radius(8)
@@ -576,12 +585,12 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                     });
             }
             if let Some(i) = remove {
-                app.s.keys_mut(a).remove(i);
+                app.s.trigger_keys_mut(trigger).remove(i);
                 keys_changed = true;
             }
-            let label = if app.capturing_key == Some(a) { "Press keys…" } else { "Add another" };
+            let label = if app.capturing_key == Some(trigger) { "Press keys…" } else { "Add another" };
             if crate::views::btn(ui, label).clicked() {
-                app.capturing_key = Some(a);
+                app.capturing_key = Some(trigger);
             }
         });
     }
@@ -840,7 +849,7 @@ fn about_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
 }
 
 pub fn capture_shortcut(app: &mut DictateApp, ctx: &egui::Context) {
-    let Some(action) = app.capturing_key else { return };
+    let Some(trigger) = app.capturing_key else { return };
     let mut done: Option<Option<String>> = None;
     ctx.input(|i| {
         for e in &i.events {
@@ -876,7 +885,7 @@ pub fn capture_shortcut(app: &mut DictateApp, ctx: &egui::Context) {
             .corner_radius(12)
             .inner_margin(Margin::same(20))
             .show(ui, |ui| {
-                ui.label(b(format!("Press the shortcut for {}", action.label()), 16.0, theme::TEXT()));
+                ui.label(b(format!("Press the shortcut for {}", trigger.label()), 16.0, theme::TEXT()));
                 ui.label(para("Function keys (F13–F19) or a combination like ⌥ Space work best. Esc cancels.", 13.0, theme::MUTED()));
             });
     });
@@ -885,8 +894,8 @@ pub fn capture_shortcut(app: &mut DictateApp, ctx: &egui::Context) {
         if let Some(k) = r {
             match k.parse::<global_hotkey::hotkey::HotKey>() {
                 Ok(_) => {
-                    if !app.s.keys(action).contains(&k) {
-                        app.s.keys_mut(action).push(k);
+                    if !app.s.trigger_keys(trigger).contains(&k) {
+                        app.s.trigger_keys_mut(trigger).push(k);
                         app.changed();
                         app.register_hotkeys();
                     }

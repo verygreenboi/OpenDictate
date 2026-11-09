@@ -2,7 +2,7 @@
 //! lives in `settings_view`.
 
 use crate::app::{DictateApp, Page, SettingsTab};
-use crate::settings::{Action, DictWord, KeepHistory};
+use crate::settings::{Action, DictWord, KeepHistory, Trigger};
 use crate::stats;
 use crate::theme::{self, b, d, m, para, t};
 use chrono::{Datelike, Duration, Local};
@@ -1010,10 +1010,10 @@ fn start_button(app: &mut DictateApp, ui: &mut egui::Ui, min_w: f32) {
 fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
     theme::soft(theme::CARD_DIM(), 14, 2.5, 3).inner_margin(Margin::same(18)).show(ui, |ui| {
         ui.set_width(186.0 - 36.0);
-        for (i, a) in Action::ALL.iter().enumerate() {
-            ui.label(t(a.label(), 12.5, theme::MUTED()));
+        for (i, trigger) in Trigger::ALL.iter().enumerate() {
+            ui.label(t(trigger.label(), 12.5, theme::MUTED()));
             ui.horizontal_wrapped(|ui| {
-                let keys = app.s.keys(*a);
+                let keys = app.s.trigger_keys(*trigger);
                 if keys.is_empty() {
                     ui.label(t("Not set", 12.0, theme::FAINT()));
                 }
@@ -1021,7 +1021,7 @@ fn right_column(app: &mut DictateApp, ui: &mut egui::Ui) {
                     kbd(ui, k);
                 }
             });
-            if i + 1 < Action::ALL.len() {
+            if i + 1 < Trigger::ALL.len() {
                 ui.add_space(6.0);
             }
         }

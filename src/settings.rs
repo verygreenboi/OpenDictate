@@ -217,7 +217,43 @@ fn system() -> Appearance {
     Appearance::System
 }
 
+/// Anything a shortcut can set off. The three actions dictate into the app
+/// in front; a meeting records the room instead, so it is not one of them,
+/// but it still needs a key, a label and a row in Settings.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Trigger {
+    Act(Action),
+    Meeting,
+}
+
+impl Trigger {
+    pub const ALL: [Trigger; 4] = [
+        Trigger::Act(Action::Dictate),
+        Trigger::Act(Action::Translate),
+        Trigger::Act(Action::Ask),
+        Trigger::Meeting,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Trigger::Act(a) => a.label(),
+            Trigger::Meeting => "Meeting",
+        }
+    }
+}
+
 impl Settings {
+    pub fn trigger_keys(&self, t: Trigger) -> &Vec<String> {
+        match t {
+            Trigger::Act(a) => self.keys(a),
+            Trigger::Meeting => &self.meeting_keys,
+        }
+    }
+    pub fn trigger_keys_mut(&mut self, t: Trigger) -> &mut Vec<String> {
+        match t {
+            Trigger::Act(a) => self.keys_mut(a),
+            Trigger::Meeting => &mut self.meeting_keys,
+        }
+    }
     pub fn keys(&self, a: Action) -> &Vec<String> {
         match a {
             Action::Dictate => &self.dictate_keys,
