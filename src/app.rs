@@ -344,7 +344,7 @@ impl DictateApp {
     pub fn start_recording(&mut self, action: Action) {
         // The selection is not needed until the speaking stops, seconds from
         // now, so fetching it must not hold the microphone shut meanwhile.
-        let selection = (action == Action::Ask).then(|| std::thread::spawn(grab_selection));
+        let selection = if action == Action::Ask { begin_selection_grab() } else { None };
         self.mic_test = None;
         match Recording::start(&self.s.microphone, self.s.input_gain) {
             Ok(r) => self.recording = Some((r, action, selection)),
@@ -931,11 +931,35 @@ fn cmd_key() -> enigo::Key {
 /// A marker tells the two apart. Anything other than the marker is the copy,
 /// so it can stop the moment the copy lands rather than always waiting, and
 /// the marker still sitting there means nothing was selected.
-fn grab_selection() -> String {
+/// Puts back whatever was on the clipboard before the grab.
+fn restore_clipboard(cb: &mut arboard::Clipboard, text: Option<String>, image: Option<arboard::ImageData<'static>>) {
+    if let Some(t) = text {
+        let _ = cb.set_text(t);
+    } else if let Some(img) = image {
+        let _ = cb.set_image(img);
+    } else {
+        let _ = cb.clear();
+    }
+}
+
+/// Starts copying whatever is selected in the front app. The handle yields
+/// the selection, or an empty string when there was none.
+///
+/// Split in two on purpose. enigo's key posting goes through Text Input
+/// Sources, which assert they are on the main queue - running the whole grab
+/// on a thread crashed the app with SIGTRAP the moment Ask was pressed. So
+/// the keystroke happens here, on the caller's thread, and only the waiting
+/// moves off it.
+///
+/// The wait is a poll against a marker rather than a fixed sleep. A copy that
+/// takes longer than the sleep used to read back empty, which is
+/// indistinguishable from nothing being selected, and Ask would quietly write
+/// something new instead of rewriting what was highlighted. Anything other
+/// than the marker is the copy; the marker still sitting there means there
+/// was nothing to copy.
+fn begin_selection_grab() -> Option<std::thread::JoinHandle<String>> {
     use std::time::{Duration, Instant};
-    let Ok(mut cb) = arboard::Clipboard::new() else { return String::new() };
-    // Whatever is on the clipboard goes back afterwards, on every path out of
-    // here, including the one where the keystroke fails.
+    let mut cb = arboard::Clipboard::new().ok()?;
     let text_before = cb.get_text().ok();
     let image_before = if text_before.is_none() { cb.get_image().ok() } else { None };
 
@@ -944,10 +968,21 @@ fn grab_selection() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let marker = format!("\u{200B}open-dictate-selection-{stamp}");
-    let mut found = String::new();
-    if cb.set_text(marker.clone()).is_ok() && send_combo(cmd_key(), 'c').is_ok() {
-        // Most copies land inside 50ms; the ceiling is for the ones that do
-        // not, and is only ever reached when nothing was selected at all.
+    if cb.set_text(marker.clone()).is_err() {
+        return None;
+    }
+    if send_combo(cmd_key(), 'c').is_err() {
+        // The clipboard still holds the marker; it must not be left there.
+        restore_clipboard(&mut cb, text_before, image_before);
+        return None;
+    }
+
+    Some(std::thread::spawn(move || {
+        let Ok(mut cb) = arboard::Clipboard::new() else { return String::new() };
+        let mut found = String::new();
+        // Most copies land inside 50ms; the ceiling is only ever reached when
+        // nothing was selected at all, which is why this is off the main
+        // thread - it would otherwise hold the microphone shut that long.
         let deadline = Instant::now() + Duration::from_millis(500);
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(15));
@@ -958,16 +993,9 @@ fn grab_selection() -> String {
                 }
             }
         }
-    }
-
-    if let Some(t) = text_before {
-        let _ = cb.set_text(t);
-    } else if let Some(img) = image_before {
-        let _ = cb.set_image(img);
-    } else {
-        let _ = cb.clear();
-    }
-    found
+        restore_clipboard(&mut cb, text_before, image_before);
+        found
+    }))
 }
 
 /// Puts the text into the front app by pasting it, then puts the old clipboard back.
