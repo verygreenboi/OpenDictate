@@ -132,6 +132,15 @@ pub struct DictateApp {
     /// on every frame.
     pub open_meeting: Option<String>,
     pub open_summary: Option<crate::meeting::Summary>,
+    /// Read once when a meeting is opened, not on every frame. Drawing the
+    /// detail page used to re-read every meeting's meta.json and parse the
+    /// whole transcript twice per frame - 15 KB of JSON, sixty times a
+    /// second, to show text that had not changed.
+    pub open_meta: Option<crate::meeting::Meta>,
+    pub open_segments: Vec<crate::meeting::Segment>,
+    /// The list, and whether it needs reading again.
+    pub meeting_list: Vec<crate::meeting::Meta>,
+    pub meetings_dirty: bool,
     /// The meeting being summarised, and how far it has got.
     pub summarising: Option<String>,
     pub summary_progress: Arc<Mutex<String>>,
@@ -217,6 +226,10 @@ impl DictateApp {
             meeting: None,
             open_meeting: None,
             open_summary: None,
+            open_meta: None,
+            open_segments: Vec::new(),
+            meeting_list: Vec::new(),
+            meetings_dirty: true,
             summarising: None,
             summary_progress: Arc::new(Mutex::new(String::new())),
             summary_rx: None,
@@ -379,6 +392,7 @@ impl DictateApp {
         if let Some(session) = self.meeting.take() {
             self.notify("Finishing the meeting…", false);
             let id = session.stop();
+            self.meetings_dirty = true;
             self.open_meeting(id.clone());
             self.page = Page::Meetings;
             // The whole point of the end-of-meeting summary is that nobody
@@ -443,10 +457,20 @@ impl DictateApp {
         }
     }
 
-    /// Opens a stored meeting, with whatever summary it already has.
+    /// Opens a stored meeting, reading it from disk once.
     pub fn open_meeting(&mut self, id: String) {
         self.open_summary = crate::meeting::summary(&id);
+        self.open_segments = crate::meeting::transcript(&id);
+        self.refresh_meetings();
+        self.open_meta = self.meeting_list.iter().find(|m| m.id == id).cloned();
         self.open_meeting = Some(id);
+    }
+
+    /// Re-reads the list of meetings. Called when the page is opened and
+    /// when a meeting is added or removed, not once a frame.
+    pub fn refresh_meetings(&mut self) {
+        self.meeting_list = crate::meeting::list();
+        self.meetings_dirty = false;
     }
 
     pub fn start_recording(&mut self, action: Action) {
@@ -812,6 +836,17 @@ impl DictateApp {
             }
             if vctx.input(|i| i.viewport().close_requested()) {
                 self.window_open = false;
+                // Closing destroys the viewport, and the AppKit backdrop
+                // goes with its window. Without forgetting it here, reopening
+                // from the menu bar gave a window with no backdrop and no
+                // background either - egui leaves its own clear while the
+                // backdrop is meant to be carrying it, so the desktop showed
+                // straight through the page.
+                #[cfg(target_os = "macos")]
+                {
+                    self.blurred = false;
+                    theme::set_backdrop(false);
+                }
             }
             crate::views::draw(self, ui);
         });
@@ -998,7 +1033,17 @@ impl eframe::App for DictateApp {
         if self.mic_test.is_some() && self.settings_tab != Some(SettingsTab::Audio) {
             self.mic_test = None;
         }
-        if self.recording.is_some() || self.busy.is_some() || self.download.is_some() || self.mic_test.is_some() {
+        // A meeting belongs in here too. Without it nothing asked for the
+        // next frame while one was running, so the indicator's bars moved
+        // only when some other event happened to wake the app up - which
+        // reads as stutter rather than as a stopped animation.
+        if self.recording.is_some()
+            || self.busy.is_some()
+            || self.download.is_some()
+            || self.mic_test.is_some()
+            || self.meeting.is_some()
+            || self.summarising.is_some()
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
         if self.toast.as_ref().is_some_and(|t| t.at.elapsed().as_secs_f32() > 5.0) {

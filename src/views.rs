@@ -196,6 +196,9 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     ] {
         if sp_item(ui, icon, label, app.page == page).clicked() {
             app.page = page;
+            if page == Page::Meetings {
+                app.meetings_dirty = true;
+            }
         }
     }
 
@@ -1429,8 +1432,7 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 
     // One stored meeting, opened.
     if let Some(id) = app.open_meeting.clone() {
-        let meta = crate::meeting::list().into_iter().find(|m| m.id == id);
-        let Some(meta) = meta else {
+        let Some(meta) = app.open_meta.clone() else {
             app.open_meeting = None;
             return;
         };
@@ -1482,14 +1484,14 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
                 ui.label(t(format!("Written by {}", sum.model), 12.0, theme::FAINT()));
             });
             ui.add_space(14.0);
-        } else if !crate::meeting::transcript(&id).is_empty() {
+        } else if !app.open_segments.is_empty() {
             if btn(ui, "Summarise").clicked() {
                 app.start_summary(id.clone());
             }
             ui.add_space(14.0);
         }
 
-        let segs = crate::meeting::transcript(&id);
+        let segs = app.open_segments.clone();
         if segs.is_empty() {
             let why = if meta.peak < 0.001 {
                 "Nothing reached the recorder at all. The meeting may have been on a device Open Dictate could not tap.".to_string()
@@ -1509,13 +1511,19 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         if delete {
             crate::meeting::delete(&id);
             app.open_meeting = None;
+            app.open_segments.clear();
+            app.open_meta = None;
+            app.meetings_dirty = true;
             app.notify("Meeting deleted", false);
         }
         return;
     }
 
-    // The list.
-    let all = crate::meeting::list();
+    // The list, read when it changed rather than every frame.
+    if app.meetings_dirty {
+        app.refresh_meetings();
+    }
+    let all = app.meeting_list.clone();
     if all.is_empty() {
         theme::ink_card().inner_margin(Margin::same(18)).show(ui, |ui| {
             ui.set_width(w - 36.0);
