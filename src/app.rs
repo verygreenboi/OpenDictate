@@ -20,7 +20,16 @@ use tray_icon::menu::MenuEvent;
 pub enum Page {
     Home,
     History,
+    Meetings,
     Dictionary,
+}
+
+/// What a shortcut sets off. The three actions dictate into the app in
+/// front; a meeting records the room instead, so it is not one of them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    Act(Action),
+    Meeting,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,7 +87,7 @@ pub struct DictateApp {
     jobs_rx: Receiver<JobOut>,
 
     hotkeys: Option<GlobalHotKeyManager>,
-    registered: Vec<(HotKey, Action)>,
+    registered: Vec<(HotKey, Trigger)>,
     hk_rx: Receiver<GlobalHotKeyEvent>,
     pub hotkey_errors: Vec<String>,
     pub capturing_key: Option<Action>,
@@ -123,6 +132,10 @@ pub struct DictateApp {
     /// Set by the menu bar's Quit, so the close that follows is a real one
     /// rather than another hide.
     quitting: bool,
+    /// The meeting being recorded, if any.
+    pub meeting: Option<crate::meeting::Session>,
+    /// Which stored meeting the Meetings page is showing.
+    pub open_meeting: Option<String>,
     /// The backdrop blur can only be attached once the real window exists,
     /// which is a frame or two after it is asked for.
     blurred: bool,
@@ -201,6 +214,8 @@ impl DictateApp {
             window_open: true,
             focus_main: false,
             quitting: false,
+            meeting: None,
+            open_meeting: None,
             blurred: false,
             window_since: None,
             icon_tries: 0,
@@ -303,22 +318,36 @@ impl DictateApp {
         };
         let old: Vec<HotKey> = self.registered.drain(..).map(|(h, _)| h).collect();
         let _ = mgr.unregister_all(&old);
+        let mut want: Vec<(String, Trigger)> = Vec::new();
         for a in Action::ALL {
-            for k in self.s.keys(a).clone() {
-                match k.parse::<HotKey>() {
-                    Ok(h) => match mgr.register(h) {
-                        Ok(()) => self.registered.push((h, a)),
-                        Err(e) => self.hotkey_errors.push(format!("{k}: {e}")),
-                    },
+            want.extend(self.s.keys(a).iter().map(|k| (k.clone(), Trigger::Act(a))));
+        }
+        want.extend(self.s.meeting_keys.iter().map(|k| (k.clone(), Trigger::Meeting)));
+        for (k, trigger) in want {
+            match k.parse::<HotKey>() {
+                Ok(h) => match mgr.register(h) {
+                    Ok(()) => self.registered.push((h, trigger)),
                     Err(e) => self.hotkey_errors.push(format!("{k}: {e}")),
-                }
+                },
+                Err(e) => self.hotkey_errors.push(format!("{k}: {e}")),
             }
         }
     }
 
     fn on_hotkey(&mut self, ctx: &egui::Context, e: GlobalHotKeyEvent) {
-        let Some(action) = self.registered.iter().find(|(h, _)| h.id() == e.id).map(|(_, a)| *a) else {
+        let Some(trigger) = self.registered.iter().find(|(h, _)| h.id() == e.id).map(|(_, a)| *a) else {
             return;
+        };
+        // A meeting is always a toggle: hold-to-talk makes no sense for
+        // something that runs for an hour.
+        let action = match trigger {
+            Trigger::Meeting => {
+                if e.state == HotKeyState::Pressed {
+                    self.toggle_meeting();
+                }
+                return;
+            }
+            Trigger::Act(a) => a,
         };
         match e.state {
             HotKeyState::Pressed => {
@@ -340,6 +369,30 @@ impl DictateApp {
 
     // -----------------------------------------------------------------------
     // Recording and the model pipeline
+
+    /// Starts or ends a meeting. Dictation and meetings do not overlap:
+    /// they would be fighting over the same microphone.
+    pub fn toggle_meeting(&mut self) {
+        if let Some(session) = self.meeting.take() {
+            self.notify("Finishing the meeting…", false);
+            let id = session.stop();
+            self.open_meeting = Some(id);
+            self.page = Page::Meetings;
+            self.notify("Meeting saved", false);
+            return;
+        }
+        if self.recording.is_some() || self.busy.is_some() {
+            self.notify("Finish the dictation first.", true);
+            return;
+        }
+        match crate::meeting::Session::start(&self.s) {
+            Ok(session) => {
+                self.notify(format!("Recording: {}", session.source.to_lowercase()), false);
+                self.meeting = Some(session);
+            }
+            Err(e) => self.notify(e, true),
+        }
+    }
 
     pub fn start_recording(&mut self, action: Action) {
         // The selection is not needed until the speaking stops, seconds from

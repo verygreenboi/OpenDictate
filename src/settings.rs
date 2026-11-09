@@ -183,6 +183,10 @@ pub struct Settings {
     pub custom_instructions: String,
 
     pub dictate_keys: Vec<String>,
+    /// Meeting mode's own shortcut. Not an Action: the other three dictate
+    /// something into the app in front, and a meeting does not.
+    #[serde(default = "meeting_default")]
+    pub meeting_keys: Vec<String>,
     pub translate_keys: Vec<String>,
     pub ask_keys: Vec<String>,
     /// true = hold the shortcut while speaking; false = press to start, press again to stop.
@@ -203,6 +207,10 @@ pub struct Settings {
     pub appearance: Appearance,
 
     pub dictionary: Vec<DictWord>,
+}
+
+fn meeting_default() -> Vec<String> {
+    vec!["F16".into()]
 }
 
 fn system() -> Appearance {
@@ -255,6 +263,7 @@ impl Default for Settings {
             custom_instructions: String::new(),
 
             dictate_keys: vec!["F19".into(), "Alt+Space".into()],
+            meeting_keys: meeting_default(),
             translate_keys: vec!["F18".into()],
             ask_keys: vec!["F17".into()],
             hold_to_talk: false,

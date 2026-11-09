@@ -191,3 +191,43 @@ calendar integration, video, and anything that sends a meeting off this Mac.
 - Does a meeting need a title before it starts, or is "Monday 14:03" plus a
   rename afterwards enough? Second one, probably: naming a thing before it
   happens is a step in the way.
+
+## Built, and what it cost
+
+Capture and storage are in: `src/tap.rs` opens one aggregate device holding
+the system tap and the default input, `src/meeting.rs` chunks, writes,
+transcribes and stores, `Trigger::Meeting` gives it a shortcut of its own
+(F16 by default, toggle only), and a Meetings page lists them with their
+transcripts.
+
+Three things only showed up by running a real meeting — forty seconds of
+`say` into the speakers, transcribed end to end:
+
+- **The tap's sample rate is not the device's.** An aggregate built around a
+  microphone adopts its own rate, and reading `kAudioTapPropertyFormat`
+  instead of the device's `kAudioDevicePropertyNominalSampleRate` had a 42
+  second meeting arrive as 21 seconds of audio, resampled wrong.
+- **Stopping chased its own tail.** The worker drained, saw the end flag and
+  a non-empty buffer, wrote a chunk, and went round again — while the device
+  was still running and filling the buffer behind it. 133 chunks and a
+  whisper run for each. The device has to stop before the last audio is
+  collected.
+- **Whisper invents speech out of silence.** A quiet 2.5 second tail came
+  back as "Akuipito. Akuipito. Akuipito.", then as "I swear, don't forget."
+  A meeting is mostly silence, so chunks are now gated on level: speech
+  measured peak 0.52 / rms 0.027, the silence after it 0.036 / 0.0044, and
+  the gate sits between them at 0.06 / 0.006.
+
+## Known, and not yet fixed
+
+- **Speakers echo into the microphone.** With both in one mixed track, a
+  sentence out of the speakers is also heard by the mic a few milliseconds
+  later, and whisper sometimes writes it twice. Headphones avoid it. A real
+  fix means keeping the two as separate channels rather than averaging them.
+- **The meeting shortcut has no settings row.** F16 is the default and can
+  only be changed by editing settings.json; the capture UI is built around
+  `Action`, and a meeting is not one.
+- **The microphone is whichever the system is set to**, not the one chosen
+  in Audio input: that setting names a cpal device, and mapping the name
+  onto a Core Audio id is a job of its own.
+- No summary, no open questions, no actions. That is part two.

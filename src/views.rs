@@ -32,6 +32,7 @@ pub fn draw(app: &mut DictateApp, ui: &mut egui::Ui) {
                     match app.page {
                         Page::Home => home(app, ui, width),
                         Page::History => history(app, ui),
+                        Page::Meetings => meetings(app, ui, width),
                         Page::Dictionary => dictionary(app, ui),
                     }
                     ui.add_space(40.0);
@@ -190,6 +191,7 @@ fn sidebar(app: &mut DictateApp, ui: &mut egui::Ui) {
     for (page, icon, label) in [
         (Page::Home, "home", "Home"),
         (Page::History, "clock", "History"),
+        (Page::Meetings, "mic", "Meetings"),
         (Page::Dictionary, "book", "Dictionary"),
     ] {
         if sp_item(ui, icon, label, app.page == page).clicked() {
@@ -317,6 +319,25 @@ pub fn kit_icon_at(p: &egui::Painter, name: &str, c: egui::Pos2, color: Color32,
                 st,
                 egui::StrokeKind::Middle,
             ));
+        }
+        // not in the sprite: a capsule over its cradle
+        "mic" => {
+            p.add(egui::Shape::rect_stroke(
+                egui::Rect::from_min_max(at(9.2, 3.0), at(14.8, 14.3)),
+                2.8 * k,
+                st,
+                egui::StrokeKind::Middle,
+            ));
+            p.add(egui::Shape::line(
+                (0..=14)
+                    .map(|i| {
+                        let a = std::f32::consts::PI * i as f32 / 14.0;
+                        at(12.0 + a.cos() * 6.2, 11.2 + a.sin() * 6.2)
+                    })
+                    .collect::<Vec<_>>(),
+                st,
+            ));
+            p.add(line((12.0, 17.4), (12.0, 21.0)));
         }
         // the overflow dots, filled rather than stroked
         "more" => {
@@ -1338,6 +1359,164 @@ fn history_row(app: &mut DictateApp, ui: &mut egui::Ui, e: &crate::settings::Ent
         });
     });
     out
+}
+
+// ---------------------------------------------------------------------------
+// Meetings
+
+fn hhmmss(secs: f32) -> String {
+    let s = secs.max(0.0) as u64;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
+    ui.horizontal(|ui| {
+        ui.label(b("Meetings", 38.0, theme::TEXT()));
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(t(
+                format!("{} Kept only on this Mac", crate::icon::LOCK),
+                14.0,
+                theme::MUTED(),
+            ));
+        });
+    });
+    ui.add_space(16.0);
+
+    // While one is running, it is the only thing worth looking at.
+    if let Some(session) = &app.meeting {
+        let (elapsed, segments, warning) = session
+            .live
+            .lock()
+            .map(|l| (l.elapsed, l.segments.clone(), l.warning.clone()))
+            .unwrap_or((0.0, Vec::new(), None));
+        let mut stop = false;
+        theme::ink_card().inner_margin(Margin::same(18)).show(ui, |ui| {
+            ui.set_width(w - 36.0);
+            ui.horizontal(|ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(12.0, 18.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 5.0, theme::RED());
+                ui.label(b(format!("Recording · {}", hhmmss(elapsed)), 19.0, theme::TEXT()));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    stop = btn(ui, "Stop").clicked();
+                });
+            });
+            ui.label(t(&session.source, 13.0, theme::MUTED()));
+            if let Some(warn) = &warning {
+                ui.add_space(6.0);
+                status(ui, State::Warn, warn);
+            }
+        });
+        ui.add_space(14.0);
+        if segments.is_empty() {
+            ui.label(para(
+                "The transcript appears here about half a minute behind the room.",
+                14.0,
+                theme::FAINT(),
+            ));
+        }
+        for seg in segments.iter().rev() {
+            transcript_line(ui, seg, w);
+        }
+        if stop {
+            app.toggle_meeting();
+        }
+        return;
+    }
+
+    // One stored meeting, opened.
+    if let Some(id) = app.open_meeting.clone() {
+        let meta = crate::meeting::list().into_iter().find(|m| m.id == id);
+        let Some(meta) = meta else {
+            app.open_meeting = None;
+            return;
+        };
+        let mut delete = false;
+        ui.horizontal(|ui| {
+            if link(ui, "All meetings").clicked() {
+                app.open_meeting = None;
+            }
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                delete = btn(ui, "Delete").clicked();
+            });
+        });
+        ui.add_space(12.0);
+        ui.label(b(&meta.title, 24.0, theme::TEXT()));
+        let length = meta.ended.map(|e| hhmmss((e - meta.started) as f32)).unwrap_or_else(|| "unfinished".into());
+        ui.label(t(format!("{} · {length}", meta.source), 13.0, theme::MUTED()));
+        ui.add_space(14.0);
+        let segs = crate::meeting::transcript(&id);
+        if segs.is_empty() {
+            ui.label(para("Nothing was transcribed from this meeting.", 14.0, theme::FAINT()));
+        }
+        for seg in &segs {
+            transcript_line(ui, seg, w);
+        }
+        if delete {
+            crate::meeting::delete(&id);
+            app.open_meeting = None;
+            app.notify("Meeting deleted", false);
+        }
+        return;
+    }
+
+    // The list.
+    let all = crate::meeting::list();
+    if all.is_empty() {
+        theme::ink_card().inner_margin(Margin::same(18)).show(ui, |ui| {
+            ui.set_width(w - 36.0);
+            ui.label(b("No meetings yet", 19.0, theme::TEXT()));
+            ui.add_space(4.0);
+            let key = app.s.meeting_keys.first().cloned().unwrap_or_else(|| "F16".into());
+            ui.label(para(
+                format!(
+                    "Press {} to start one. Open Dictate records what your Mac is playing along with your microphone, so everyone on the call is in the transcript, and writes it down as the meeting runs.",
+                    pretty_key(&key)
+                ),
+                14.0,
+                theme::MUTED(),
+            ));
+        });
+        return;
+    }
+    for m in all {
+        let resp = theme::ink_card().inner_margin(Margin::same(16)).show(ui, |ui| {
+            ui.set_width(w - 32.0);
+            ui.horizontal(|ui| {
+                ui.label(b(&m.title, 17.0, theme::TEXT()));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let length = m.ended.map(|e| hhmmss((e - m.started) as f32)).unwrap_or_else(|| "unfinished".into());
+                    ui.label(t(length, 13.0, theme::MUTED()));
+                });
+            });
+            ui.label(t(&m.source, 12.5, theme::FAINT()));
+        });
+        let click = ui.interact(resp.response.rect, ui.id().with(&m.id), Sense::click());
+        if click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            app.open_meeting = Some(m.id.clone());
+        }
+        ui.add_space(10.0);
+    }
+}
+
+fn transcript_line(ui: &mut egui::Ui, seg: &crate::meeting::Segment, w: f32) {
+    ui.horizontal_top(|ui| {
+        ui.add_space(2.0);
+        let (r, _) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::hover());
+        ui.painter().text(
+            pos2(r.left(), r.top()),
+            Align2::LEFT_TOP,
+            hhmmss(seg.at_ms as f32 / 1000.0),
+            FontId::new(12.0, theme::medium()),
+            theme::FAINT(),
+        );
+        ui.add(egui::Label::new(para(&seg.text, 14.0, theme::TEXT())).wrap());
+    });
+    ui.add_space(10.0);
+    let _ = w;
 }
 
 // ---------------------------------------------------------------------------
