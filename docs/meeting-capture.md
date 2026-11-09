@@ -298,6 +298,8 @@ on each extracted line is corrected afterwards from the chunk's measured
 label - a fact, not a request. The same recording now gives "Someone will
 update the roadmap this afternoon".
 
-The meeting model is set to qwen2.5:7b, but on this evidence llama3.2:3b
-would do as well and run faster. The setting exists; which model goes in it
-is open.
+The meeting model is back to llama3.2:3b on that evidence: the same scores
+for a quarter of the memory and a fraction of the time. The setting earns
+its place anyway - summarising runs once at the end of a meeting, so when a
+model does turn out to be better at this it can be used here without
+slowing dictation down.
