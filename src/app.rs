@@ -145,9 +145,14 @@ pub struct DictateApp {
     pub summarising: Option<String>,
     pub summary_progress: Arc<Mutex<String>>,
     summary_rx: Option<Receiver<(String, Result<crate::meeting::Summary, String>)>>,
-    /// The backdrop blur can only be attached once the real window exists,
-    /// which is a frame or two after it is asked for.
-    blurred: bool,
+    /// The window the backdrop is attached to, if any.
+    ///
+    /// Not a flag: closing the window destroys it and the backdrop with it,
+    /// and resetting a flag only works if the close is noticed. Clicking the
+    /// red button does not reach close_requested here, so the first attempt
+    /// at this missed it entirely. Comparing window numbers needs nothing to
+    /// be noticed - a different window simply has a different number.
+    blurred_window: Option<isize>,
     /// When that happened, and how many times the Dock tile has been set
     /// since: the Dock can put its cached icon back during launch, so this
     /// is applied again a second and three seconds later.
@@ -233,7 +238,7 @@ impl DictateApp {
             summarising: None,
             summary_progress: Arc::new(Mutex::new(String::new())),
             summary_rx: None,
-            blurred: false,
+            blurred_window: None,
             window_since: None,
             icon_tries: 0,
         };
@@ -836,28 +841,28 @@ impl DictateApp {
             }
             if vctx.input(|i| i.viewport().close_requested()) {
                 self.window_open = false;
-                // Closing destroys the viewport, and the AppKit backdrop
-                // goes with its window. Without forgetting it here, reopening
-                // from the menu bar gave a window with no backdrop and no
-                // background either - egui leaves its own clear while the
-                // backdrop is meant to be carrying it, so the desktop showed
-                // straight through the page.
-                #[cfg(target_os = "macos")]
-                {
-                    self.blurred = false;
-                    theme::set_backdrop(false);
-                }
             }
             crate::views::draw(self, ui);
         });
+        // 300 is wide enough to tell the real window from the 1x1 root
+        // anchor, which carries the same title. Checked every frame rather
+        // than once: a window that has been closed and reopened is a new
+        // window with a new number, and its backdrop has to be built again.
         #[cfg(target_os = "macos")]
-        if !self.blurred {
-            // 300 is wide enough to tell the real window from the 1x1 root
-            // anchor, which carries the same title.
-            self.blurred = crate::macos_look::blur_window(300.0, theme::sheer_rgba());
-            if self.blurred {
-                theme::set_backdrop(true);
-                self.window_since = Some(std::time::Instant::now());
+        {
+            let current = crate::macos_look::main_window_number(300.0);
+            if current != self.blurred_window {
+                self.blurred_window = match current {
+                    Some(_) => crate::macos_look::blur_window(300.0, theme::sheer_rgba()),
+                    None => None,
+                };
+                // While there is no backdrop, egui paints the page itself.
+                // Leaving it clear is what made a reopened window show the
+                // desktop straight through it.
+                theme::set_backdrop(self.blurred_window.is_some());
+                if self.blurred_window.is_some() && self.window_since.is_none() {
+                    self.window_since = Some(std::time::Instant::now());
+                }
             }
         }
         // Launch Services caches a bundle's icon against its path, so an app

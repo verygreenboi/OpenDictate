@@ -49,9 +49,21 @@ fn ns_color(rgba: [f64; 4]) -> Retained<NSColor> {
 /// is why the bar had nothing behind it at all once the window went
 /// transparent.
 ///
-/// Returns false until the window exists, so the caller keeps asking.
-pub fn blur_window(min_width: f64, tint: [f64; 4]) -> bool {
-    let Some(mtm) = MainThreadMarker::new() else { return false };
+/// The number of the window a meeting-sized window currently has, or None
+/// when there isn't one. Closing and reopening gives a different number,
+/// which is how the caller knows its backdrop went with the old window.
+pub fn main_window_number(min_width: f64) -> Option<isize> {
+    let mtm = MainThreadMarker::new()?;
+    let app = NSApplication::sharedApplication(mtm);
+    app.windows()
+        .iter()
+        .find(|w| w.frame().size.width >= min_width)
+        .map(|w| w.windowNumber() as isize)
+}
+
+/// Returns the window it attached to, or None while there isn't one.
+pub fn blur_window(min_width: f64, tint: [f64; 4]) -> Option<isize> {
+    let mtm = MainThreadMarker::new()?;
     let app = NSApplication::sharedApplication(mtm);
     for window in app.windows().iter() {
         // The root viewport is a 1x1 anchor with the same title, so the real
@@ -96,9 +108,9 @@ pub fn blur_window(min_width: f64, tint: [f64; 4]) -> bool {
 
         frame_view.addSubview_positioned_relativeTo(&fx, NSWindowOrderingMode::Below, None);
         TINT.with(|t| *t.borrow_mut() = Some(wash));
-        return true;
+        return Some(window.windowNumber() as isize);
     }
-    false
+    None
 }
 
 /// Repaints the wash after a theme change.
