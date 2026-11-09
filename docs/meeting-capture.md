@@ -78,14 +78,46 @@ The sequence that worked, for the implementation to follow:
 4. `AudioDeviceCreateIOProcID` + `AudioDeviceStart`; samples arrive in the
    IO proc's input buffer list as interleaved f32.
 
+### Permission, settled
+
+The first spike ran from a terminal that already holds screen recording, so
+it proved nothing about the app. Re-run from the installed, signed bundle
+through LaunchServices — `open -a "Open Dictate" --args --tap-check`, which
+writes its report to the data directory because a LaunchServices start has
+nowhere to print — it captured the same way, peak 0.3589.
+
+What `tccd` logged while it ran:
+
+```
+09:24:45  kTCCServiceAudioCapture   Sub:{app.opendictate.desktop}  Unknown (None)
+09:24:46  AUTHREQ_PROMPTING         service=kTCCServiceAudioCapture
+09:24:50  kTCCServiceAudioCapture   Sub:{app.opendictate.desktop}  Allowed (User Consent)
+...
+09:25:07  kTCCServiceScreenCapture  Sub:{app.opendictate.desktop}  Unknown (None)
+```
+
+Three things fall out of that:
+
+- **The subject is the app**, `app.opendictate.desktop` with a
+  `responsible_path` inside `/Applications/Open Dictate.app` — not the
+  terminal, not whatever launched it. The grant belongs to the bundle and
+  lives with its signature, as the microphone and accessibility grants
+  already do.
+- **The right is `kTCCServiceAudioCapture`** — System Audio Recording — and
+  the app is prompted for it on first use: unknown, prompt, allowed, in that
+  order, at the first tap rather than at launch. So meeting mode has to
+  survive a first run whose opening seconds are silent behind a dialog, and
+  must not claim to be recording everyone until it is.
+- **Screen recording is not required.** `kTCCServiceScreenCapture` stayed
+  `Unknown (None)` for the app throughout, and the audio arrived anyway.
+  This was the thing most worth being true: a call can be recorded without
+  the app ever asking to see the screen.
+
+`NSAudioCaptureUsageDescription` is in both plists and the prompt carries it.
+
 ### What the spike did not settle
 
-- **Permission.** No prompt appeared — but the spike ran from this terminal,
-  which already holds Screen & System Audio Recording (it has been taking
-  screenshots all session), and a bare binary inherits the launching
-  process's TCC identity. The signed bundle is a different subject and will
-  have to ask for itself. That is the next thing to test, and it has to be
-  tested from the packaged app, not from a terminal.
+- ~~**Permission.**~~ Settled, see above.
 - **The microphone in the same device.** The spike's aggregate contains only
   the tap. Meetings need the mic in it too, through
   `kAudioAggregateDeviceSubDeviceListKey`, so both sides arrive mixed on one
