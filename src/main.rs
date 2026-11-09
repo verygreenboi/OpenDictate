@@ -115,6 +115,10 @@ fn main() -> eframe::Result<()> {
         // explainable without a rebuild.
         let secs: u64 = args.get(i + 1).and_then(|a| a.parse().ok()).unwrap_or(40);
         let s = settings::load_settings();
+        // Also written to a file: the run that says anything about the
+        // microphone's permission is one launched as the bundle, and that
+        // run has nowhere to print.
+        let report = settings::data_dir().join("meeting-check.txt");
         match meeting::Session::start(&s) {
             Err(e) => println!("could not start: {e}"),
             Ok(session) => {
@@ -122,7 +126,9 @@ fn main() -> eframe::Result<()> {
                 let dir = session.dir.clone();
                 std::thread::sleep(std::time::Duration::from_secs(secs));
                 let id = session.stop();
-                println!("\n{}", std::fs::read_to_string(dir.join("levels.log")).unwrap_or_default());
+                let levels = std::fs::read_to_string(dir.join("levels.log")).unwrap_or_default();
+                let _ = std::fs::write(&report, format!("meeting {id}\n{levels}"));
+                println!("\n{levels}");
                 for seg in meeting::transcript(&id) {
                     println!("[{:>7}ms {:4.1}s] {}", seg.at_ms, seg.secs, seg.text);
                 }
