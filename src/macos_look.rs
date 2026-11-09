@@ -16,6 +16,59 @@ thread_local! {
     /// The wash of paper over the blur. Kept so a theme change can retint it
     /// without rebuilding the backdrop.
     static TINT: RefCell<Option<Retained<NSBox>>> = const { RefCell::new(None) };
+    /// The blur itself, kept so its presence can be checked rather than
+    /// assumed. Attaching it to a reopened window reported success and then
+    /// came to nothing: AppKit rebuilds the frame view's subviews while the
+    /// window is being set up, and anything added too early goes with them.
+    static FX: RefCell<Option<Retained<NSVisualEffectView>>> = const { RefCell::new(None) };
+}
+
+/// Keeps the backdrop the size of the window it is in.
+///
+/// It is built from the frame view's bounds, and on a window that has just
+/// been reopened those are not settled yet - a zero-sized view attaches
+/// perfectly well and draws nothing, which is exactly what a reopened
+/// window looked like: the attach logged success and the desktop showed
+/// straight through the page. An autoresizing mask cannot grow a view from
+/// nothing either, so the size is set here instead of trusted.
+pub fn fit_backdrop() {
+    if MainThreadMarker::new().is_none() {
+        return;
+    }
+    FX.with(|f| {
+        if let Some(fx) = f.borrow().as_ref() {
+            unsafe {
+                if let Some(parent) = fx.superview() {
+                    let want = parent.bounds();
+                    let have = fx.frame();
+                    if (have.size.width - want.size.width).abs() > 0.5
+                        || (have.size.height - want.size.height).abs() > 0.5
+                    {
+                        fx.setFrame(want);
+                        TINT.with(|t| {
+                            if let Some(wash) = t.borrow().as_ref() {
+                                wash.setFrame(fx.bounds());
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Whether the backdrop is still in the window it is supposed to be in.
+///
+/// Checks the view, not a flag and not a window number: the only thing that
+/// matters is whether it is in a hierarchy, and whether that hierarchy is
+/// the window on screen now.
+pub fn backdrop_ok(min_width: f64) -> bool {
+    let Some(current) = main_window_number(min_width) else { return false };
+    FX.with(|f| {
+        f.borrow().as_ref().is_some_and(|fx| unsafe {
+            fx.superview().is_some() && fx.window().is_some_and(|w| w.windowNumber() as isize == current)
+        })
+    })
 }
 
 /// Sets the Dock tile from the icon we ship.
@@ -49,6 +102,27 @@ fn ns_color(rgba: [f64; 4]) -> Retained<NSColor> {
 /// is why the bar had nothing behind it at all once the window went
 /// transparent.
 ///
+/// Whether the app is the one in front.
+///
+/// macOS expects clicking an app's Dock icon to bring its window back, which
+/// is normally the delegate's applicationShouldHandleReopen. eframe owns the
+/// delegate, so this is read instead: the app going from background to front
+/// with no window open means the same thing.
+pub fn app_is_active() -> bool {
+    MainThreadMarker::new().is_some_and(|mtm| NSApplication::sharedApplication(mtm).isActive())
+}
+
+/// Logs what the backdrop is doing, beside the settings. Attaching happens
+/// on a window the user can close and reopen at will, and a fault there is
+/// invisible from the outside.
+pub fn log_backdrop(line: &str) {
+    use std::io::Write;
+    let path = crate::settings::data_dir().join("backdrop.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// The number of the window a meeting-sized window currently has, or None
 /// when there isn't one. Closing and reopening gives a different number,
 /// which is how the caller knows its backdrop went with the old window.
@@ -108,6 +182,7 @@ pub fn blur_window(min_width: f64, tint: [f64; 4]) -> Option<isize> {
 
         frame_view.addSubview_positioned_relativeTo(&fx, NSWindowOrderingMode::Below, None);
         TINT.with(|t| *t.borrow_mut() = Some(wash));
+        FX.with(|f| *f.borrow_mut() = Some(fx));
         return Some(window.windowNumber() as isize);
     }
     None

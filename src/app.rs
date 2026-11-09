@@ -153,6 +153,11 @@ pub struct DictateApp {
     /// at this missed it entirely. Comparing window numbers needs nothing to
     /// be noticed - a different window simply has a different number.
     blurred_window: Option<isize>,
+    /// Whether the app was in front last frame, for spotting a Dock click.
+    was_active: bool,
+    /// What the window's visibility was last set to, so it is only sent when
+    /// it changes.
+    window_shown: Option<bool>,
     /// When that happened, and how many times the Dock tile has been set
     /// since: the Dock can put its cached icon back during launch, so this
     /// is applied again a second and three seconds later.
@@ -239,6 +244,8 @@ impl DictateApp {
             summary_progress: Arc::new(Mutex::new(String::new())),
             summary_rx: None,
             blurred_window: None,
+            was_active: true,
+            window_shown: None,
             window_since: None,
             icon_tries: 0,
         };
@@ -292,6 +299,18 @@ impl DictateApp {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             }
+        }
+        // Clicking the Dock icon brings an app's window back on macOS. The
+        // delegate that normally does it belongs to eframe, so the same
+        // thing is read from the app coming to the front with nothing open.
+        #[cfg(target_os = "macos")]
+        {
+            let active = crate::macos_look::app_is_active();
+            if active && !self.was_active && !self.window_open && self.shot.is_none() {
+                self.window_open = true;
+                self.focus_main = true;
+            }
+            self.was_active = active;
         }
         // A closing root means quit; the real window closes on its own below.
         if self.shot.is_none() && !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
@@ -822,10 +841,15 @@ impl DictateApp {
     ///
     /// Closing it just stops this being called, so the app and its shortcuts
     /// carry on, and the root keeps producing the frames the indicator needs.
+    /// The real window, kept alive and hidden rather than destroyed.
+    ///
+    /// It used to be dropped when closed and rebuilt on reopen, and the
+    /// AppKit backdrop could not survive that: attaching to the new window
+    /// reported success, the view was in the hierarchy and the right size,
+    /// and it still drew nothing - a reopened window showed the desktop
+    /// straight through its page. Hiding keeps one window, one backdrop, and
+    /// nothing to rebuild.
     fn main_window(&mut self, ctx: &egui::Context) {
-        if !self.window_open {
-            return;
-        }
         let builder = egui::ViewportBuilder::default()
             .with_title("Open Dictate")
             .with_inner_size([1360.0, 920.0])
@@ -834,16 +858,30 @@ impl DictateApp {
             // has to be able to carry it.
             .with_transparent(true);
         let focus = std::mem::take(&mut self.focus_main);
+        let want_visible = self.window_open;
+        let visibility_changed = self.window_shown != Some(want_visible);
+        self.window_shown = Some(want_visible);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("main"), builder, |ui, _| {
             let vctx = ui.ctx().clone();
+            if visibility_changed {
+                vctx.send_viewport_cmd(egui::ViewportCommand::Visible(want_visible));
+            }
             if focus {
                 vctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
+            // The red button asks to close; the app only hides, so the close
+            // is refused and the window goes away without being destroyed.
             if vctx.input(|i| i.viewport().close_requested()) {
+                vctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.window_open = false;
             }
-            crate::views::draw(self, ui);
+            if want_visible {
+                crate::views::draw(self, ui);
+            }
         });
+        if !want_visible {
+            return;
+        }
         // 300 is wide enough to tell the real window from the 1x1 root
         // anchor, which carries the same title. Checked every frame rather
         // than once: a window that has been closed and reopened is a new
@@ -851,11 +889,18 @@ impl DictateApp {
         #[cfg(target_os = "macos")]
         {
             let current = crate::macos_look::main_window_number(300.0);
-            if current != self.blurred_window {
+            // Asking the view whether it is still there, rather than
+            // trusting that attaching it once worked.
+            if !crate::macos_look::backdrop_ok(300.0) {
+                let before = self.blurred_window;
                 self.blurred_window = match current {
                     Some(_) => crate::macos_look::blur_window(300.0, theme::sheer_rgba()),
                     None => None,
                 };
+                crate::macos_look::log_backdrop(&format!(
+                    "window {before:?} -> {current:?}, attached {:?}",
+                    self.blurred_window
+                ));
                 // While there is no backdrop, egui paints the page itself.
                 // Leaving it clear is what made a reopened window show the
                 // desktop straight through it.
@@ -864,6 +909,9 @@ impl DictateApp {
                     self.window_since = Some(std::time::Instant::now());
                 }
             }
+            // A window that has just appeared has not been laid out yet, so
+            // the backdrop is sized against it every frame rather than once.
+            crate::macos_look::fit_backdrop();
         }
         // Launch Services caches a bundle's icon against its path, so an app
         // that once had none can keep the generic tile however correct the
