@@ -47,6 +47,7 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key><string>$VERSION</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAudioCaptureUsageDescription</key><string>Meeting mode records what your Mac is playing, so the other voices on a call are in the transcript alongside yours. The recording stays on this Mac.</string>
     <key>NSMicrophoneUsageDescription</key><string>Open Dictate listens while you hold or press your dictation shortcut, and sends the recording only to the speech model you chose.</string>
     <key>NSAppleEventsUsageDescription</key><string>Open Dictate pastes your dictated text into the app you are using.</string>
 </dict>

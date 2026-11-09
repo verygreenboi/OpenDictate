@@ -24,4 +24,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSApplication", "NSColor", "NSGraphics", "NSImage", "NSResponder",
     "NSView", "NSVisualEffectView", "NSWindow",
 ] }
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSGeometry"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSGeometry", "NSString", "NSUUID", "NSValue"] }
+# Core Audio process taps: system audio with no driver and no screen capture.
+objc2-core-audio = { version = "0.3", features = ["AudioHardware", "objc2", "objc2-core-audio-types", "objc2-foundation", "std"] }
+objc2-core-audio-types = { version = "0.3", features = ["CoreAudioBaseTypes"] }
+objc2-core-foundation = { version = "0.3", features = ["CFDictionary", "CFString", "CFBase"] }

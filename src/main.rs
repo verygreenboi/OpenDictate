@@ -7,6 +7,7 @@ mod macos_look;
 mod settings;
 mod settings_view;
 mod stats;
+mod tap;
 mod theme;
 mod tray;
 mod views;
@@ -30,6 +31,7 @@ mod macos_bundle {
     <key>CFBundleVersion</key><string>VERSION</string>
     <key>LSMinimumSystemVersion</key><string>11.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAudioCaptureUsageDescription</key><string>Meeting mode records what your Mac is playing, so the other voices on a call are in the transcript alongside yours. The recording stays on this Mac.</string>
     <key>NSMicrophoneUsageDescription</key><string>Open Dictate listens while you hold or press your dictation shortcut, and sends the recording only to the speech model you chose.</string>
     <key>NSAppleEventsUsageDescription</key><string>Open Dictate pastes your dictated text into the app you are using.</string>
 </dict>
@@ -78,6 +80,17 @@ mod macos_bundle {
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--tap-check") {
+        // Writes as well as prints: the only run that proves anything about
+        // the permission is one launched by LaunchServices as the signed
+        // bundle, and that run has nowhere to print to.
+        let report = tap::check(6);
+        print!("{report}");
+        let path = settings::data_dir().join("tap-check.txt");
+        let _ = std::fs::create_dir_all(settings::data_dir());
+        let _ = std::fs::write(&path, &report);
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--mic-check") {
         // Records two seconds from every microphone and prints how loud it was.
         for name in audio::input_devices() {
