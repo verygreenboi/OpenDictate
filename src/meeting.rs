@@ -67,6 +67,11 @@ pub struct Live {
     /// different problem from a quiet room and has to be said differently.
     pub peak: f32,
     pub chunks: usize,
+    /// Whether the microphone ever contributed anything. The aggregate can
+    /// report a microphone and then deliver nothing from it, and a meeting
+    /// that says "you and everyone on the call" when your side was never
+    /// recorded is worse than one that admits it.
+    pub heard_you: bool,
 }
 
 pub fn root() -> PathBuf {
@@ -227,7 +232,12 @@ impl Session {
         let path = self.dir.join("meta.json");
         if let Some(mut m) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()) {
             m.ended = Some(now());
-            m.peak = self.live.lock().map(|l| l.peak).unwrap_or(0.0);
+            if let Ok(l) = self.live.lock() {
+                m.peak = l.peak;
+                if !l.heard_you && l.chunks > 0 {
+                    m.source = "Everyone on the call · your microphone was not captured".into();
+                }
+            }
             let _ = std::fs::write(&path, serde_json::to_string_pretty(&m).unwrap_or_default());
         }
     }
@@ -289,11 +299,25 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
             let (you_peak, you_rms) = level(&you);
             let (them_peak, them_rms) = level(&them);
 
-            // Transcribe whichever side was talking rather than the mix.
-            // On speakers the microphone hears the call a few milliseconds
+            // Two sides only when there really are two. The device can stop
+            // handing over the layout it was opened with - a microphone
+            // dropping out of the aggregate mid-meeting - and the channels
+            // then carry the same audio twice. Measured, not assumed: if the
+            // two are identical there is nothing to tell apart, whatever the
+            // channel count says.
+            let identical = !you.is_empty()
+                && you.len() == them.len()
+                && you.iter().zip(them.iter()).all(|(a, b)| (a - b).abs() < 1e-9);
+            if identical || !cap.split_ok() {
+                log(&dir, "    one source only: not splitting this chunk");
+            }
+            // Transcribe whichever side was talking rather than the mix. On
+            // speakers the microphone hears the call a few milliseconds
             // late, so a mixed track carries everything twice and whisper
             // sometimes writes it twice; one side alone does not.
-            let (voice, samples) = if you_rms > them_rms * 2.5 {
+            let (voice, samples) = if identical || !cap.split_ok() {
+                ("both", if them.is_empty() { you } else { them })
+            } else if you_rms > them_rms * 2.5 {
                 ("you", you)
             } else if them_rms > you_rms * 2.5 {
                 ("them", them)
@@ -315,6 +339,7 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
             if let Ok(mut l) = live.lock() {
                 l.peak = l.peak.max(peak);
                 l.chunks += 1;
+                l.heard_you |= you_rms > 0.001;
             }
             // Two conditions, because one threshold could not separate the
             // cases seen so far: speech at peak 0.43, a noisy tail at 0.036
@@ -395,15 +420,21 @@ const MAP: &str = "You list what happened in one part of a meeting transcript. Y
 you are going through it and writing down every item you find, including small ones.\n\n\
 The transcript has no speaker labels; write \"someone\" where you cannot tell.\n\n\
 One line per item, each line starting with exactly one of:\n\n\
-DECISION: something the meeting agreed, settled or chose.\n\
+DECISION: something the meeting agreed, settled or chose. Not a topic it touched on.\n\
 QUESTION: something asked that this part does not answer.\n\
-ACTION: something a person said they would do.\n\n\
+ACTION: something a person committed to doing after the meeting. Not something \
+they did during it, not an opinion, not a suggestion, and not anything hypothetical.\n\n\
 Rules:\n\
 - Work through the part in order and catch every item. Missing one is the main way to do this badly.\n\
 - Lines marked [you] were spoken by the person this summary is for; [the others] by everyone else. \
 Say \"you\" for the first and \"someone\" for the second.\n\
 - Only what is in the transcript. Never add, guess or round out. If the part is thin, write few lines.\n\
-- One item per line, under twenty words. No headings, no numbering, no blank lines, no commentary.";
+- One item per line, under twenty words. No headings, no numbering, no blank lines, no commentary.\n\
+- Do not describe the conversation. An item is something still true tomorrow: a choice \
+made, a question left hanging, a task taken on. A line reporting what was said is not one. \
+Never copy wording from these rules into your answer.\n\
+- A part this size rarely holds more than three or four of any one kind. If you are \
+writing more than that, you are describing rather than listing.";
 
 const OVERVIEW: &str = "You are writing the opening of a meeting summary for someone who missed it.\n\n\
 Two or three sentences, plain and factual, saying what the meeting was about and what came of it. \
@@ -470,8 +501,12 @@ fn dedupe(items: Vec<String>) -> Vec<String> {
 /// instruction, so the pronoun is corrected here instead, where it is a fact
 /// rather than a request.
 fn attribute(item: &str, voice: &str) -> String {
+    // Only the forms that stay grammatical once swapped. A bare "You " ->
+    // "Someone " gave "Someone are a small startup" and "Someone want to
+    // design a dog walking app": the verb does not agree, and a summary full
+    // of broken English is worse than one that says "you" too often.
     let swap: &[(&str, &str)] = match voice {
-        "them" => &[("You will ", "Someone will "), ("You ", "Someone "), ("I will ", "Someone will "), ("I'll ", "Someone will "), ("We will ", "They will ")],
+        "them" => &[("You will ", "Someone will "), ("I will ", "Someone will "), ("I'll ", "Someone will ")],
         "you" => &[("Someone will ", "You will "), ("I will ", "You will "), ("I'll ", "You will ")],
         _ => return item.to_string(),
     };
@@ -534,20 +569,31 @@ pub fn summarise(s: &Settings, id: &str, progress: &Mutex<String>) -> Result<Sum
         };
         let user = format!("Part {} of {}. {who}\n\n{block}", i + 1, blocks.len());
         let out = crate::engines::chat_as(s, model, MAP, &[], &user)?;
+        // Per block, not per meeting: a long meeting should still be able to
+        // carry a long list, but no single block may run away with it.
+        let (start_d, start_a, start_q) = (decisions.len(), actions.len(), questions.len());
         for line in out.lines() {
             let line = strip_bullet(line);
             let upper = line.to_uppercase();
-            let (bucket, prefix) = if upper.starts_with("DECISION") {
-                (&mut decisions, "DECISION")
+            let (bucket, prefix, start) = if upper.starts_with("DECISION") {
+                (&mut decisions, "DECISION", start_d)
             } else if upper.starts_with("ACTION") {
-                (&mut actions, "ACTION")
+                (&mut actions, "ACTION", start_a)
             } else if upper.starts_with("QUESTION") {
-                (&mut questions, "QUESTION")
+                (&mut questions, "QUESTION", start_q)
             } else {
                 continue;
             };
+            let per_block_cap = start + 4;
             let item = line[prefix.len()..].trim_start_matches([':', ' ']).trim().to_string();
-            if item.split_whitespace().count() >= 2 {
+            // The caps and the length limit are enforced here as well as
+            // asked for: one confused block of a 20 minute meeting
+            // contributed its way to 53 "actions", most of them narration.
+            let n = item.split_whitespace().count();
+            let describing = ["the meeting", "someone explained", "someone said", "someone discussed", "it was noted"]
+                .iter()
+                .any(|p| item.to_lowercase().starts_with(p));
+            if (2..=22).contains(&n) && !describing && bucket.len() < per_block_cap {
                 bucket.push(attribute(&item, voice));
             }
         }

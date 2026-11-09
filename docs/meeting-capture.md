@@ -303,3 +303,43 @@ for a quarter of the memory and a fraction of the time. The setting earns
 its place anyway - summarising runs once at the end of a meeting, so when a
 model does turn out to be better at this it can be used here without
 slowing dictation down.
+
+## What a real 20 minute meeting found
+
+The first long recording, and most of what it taught was about the code
+rather than the model.
+
+**The channel split was lying.** 70 of its 76 chunks had bit-identical
+"you" and "them" levels - the same audio counted twice. The microphone had
+dropped out of the aggregate a couple of minutes in, and the tap's stereo
+pair was being cut in half and labelled as two speakers. The boundary was
+computed once at open and never checked again. It is now checked every
+callback against the channel counts the device was opened with, with a
+second guard that compares the two mixes directly: identical means one
+source, whatever the counts say. A chunk that cannot be attributed is
+marked "both" and transcribed from the mix rather than guessed at.
+
+**The microphone drops out on its own.** A later run captured nothing from
+it at all for 34 seconds while the tap worked perfectly. Why is not yet
+known. The meeting now says "your microphone was not captured" instead of
+claiming both sides were recorded.
+
+**53 "actions" for 20 minutes.** Most were narration - "still pretty early
+in the process", "conducting user research". ACTION now means a commitment
+to do something after the meeting, with four per block as a hard cap
+enforced in code, and lines that merely report the conversation rejected.
+Re-run on the same transcript: 22.
+
+**The pronoun rewrite was producing broken English** - "Someone are a small
+startup", "Someone want to design a dog walking app". A bare "You " was
+being swapped for "Someone " with no regard for the verb. Only "You will",
+"I will" and "I'll" are swapped now.
+
+**A prompt example leaked into the output.** Tightening the ACTION rule with
+a worked example put "You will send the background by Friday" into a real
+summary, as an action. The example is gone; the rule is stated abstractly
+instead.
+
+`--summarise <id|latest>` re-runs extraction over a transcript already on
+disk, so this was all measured against the real meeting without recording
+it again.

@@ -18,6 +18,7 @@ use objc2_core_foundation::{CFDictionary, CFString};
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Everything the IO proc needs. Handed over as the client pointer, and
@@ -32,6 +33,17 @@ struct Sink {
     /// The aggregate lists its sub-devices before its taps, so the mic's
     /// channels come first - checked by level, not taken on trust.
     mic_channels: usize,
+    /// How many belong to the tap. Together these say what the device should
+    /// be handing over; when it hands over something else, the split is off.
+    tap_channels: usize,
+    /// Cleared the moment the channel layout stops matching what was opened.
+    ///
+    /// A 20 minute meeting came back with the two sides bit-identical for 70
+    /// of its 76 chunks: the microphone had dropped out of the aggregate and
+    /// the tap's stereo pair was being cut in half and labelled "you" and
+    /// "them". Splitting on a layout that no longer holds does not produce an
+    /// error, it produces a confident lie, so it is checked every callback.
+    split_ok: AtomicBool,
     /// Set while diagnosing: the loudest sample seen on each channel.
     probe: Mutex<Vec<f32>>,
 }
@@ -115,6 +127,14 @@ unsafe extern "C-unwind" fn io_proc(
         return 0;
     }
 
+    // Only split when the device is handing over exactly what it was opened
+    // with. Anything else and we do not know whose channel is whose, so
+    // everything goes down one side and the chunk is marked as mixed.
+    let split = sink.mic_channels > 0 && channels == sink.mic_channels + sink.tap_channels;
+    if !split {
+        sink.split_ok.store(false, Ordering::Relaxed);
+    }
+
     let mut mine = vec![0f32; frames];
     let mut theirs = vec![0f32; frames];
     let (mut n_mine, mut n_theirs) = (0usize, 0usize);
@@ -129,7 +149,7 @@ unsafe extern "C-unwind" fn io_proc(
         let data = std::slice::from_raw_parts(b.mData as *const f32, n * ch);
         for c in 0..ch {
             let global = index + c;
-            let into_mine = global < sink.mic_channels;
+            let into_mine = split && global < sink.mic_channels;
             if into_mine {
                 n_mine += 1;
             } else {
@@ -304,25 +324,29 @@ impl SystemCapture {
                 return Err(format!("system audio is unavailable (device {})", status(st)));
             }
 
+            let mut fmt: AudioStreamBasicDescription = std::mem::zeroed();
+            get(tap, kAudioTapPropertyFormat, &mut fmt);
             // The tap's own format is not what the IO proc delivers: an
             // aggregate device built around a microphone adopts a rate of
             // its own, and reading the tap's instead had a 42 second meeting
-            // arriving as 21 seconds of audio.
+            // arriving as 21 seconds of audio. Its channel count is still
+            // the tap's own, and that is what the split is measured against.
             let mut rate: f64 = 0.0;
             get(device, kAudioDevicePropertyNominalSampleRate, &mut rate);
             if rate <= 0.0 {
-                let mut fmt: AudioStreamBasicDescription = std::mem::zeroed();
-                get(tap, kAudioTapPropertyFormat, &mut fmt);
                 rate = if fmt.mSampleRate > 0.0 { fmt.mSampleRate } else { 48_000.0 };
             }
 
             // The mic's own channel count, so the IO proc knows where its
             // channels stop and the tap's begin.
             let mic_channels = mic.filter(|_| has_mic).map(|d| input_channels(d)).unwrap_or(0);
+            let tap_channels = fmt.mChannelsPerFrame as usize;
             let sink = Box::into_raw(Box::new(Arc::new(Sink {
                 mine: Mutex::new(Vec::new()),
                 theirs: Mutex::new(Vec::new()),
                 mic_channels,
+                tap_channels,
+                split_ok: AtomicBool::new(mic_channels > 0 && tap_channels > 0),
                 probe: Mutex::new(Vec::new()),
             })));
             let mut proc_id: AudioDeviceIOProcID = None;
@@ -376,6 +400,15 @@ impl SystemCapture {
         unsafe {
             let sink = &*self.sink;
             sink.probe.lock().map(|p| p.clone()).unwrap_or_default()
+        }
+    }
+
+    /// Whether the two sides can still be told apart. False once the device
+    /// has handed over a layout other than the one it was opened with.
+    pub fn split_ok(&self) -> bool {
+        unsafe {
+            let sink = &*self.sink;
+            sink.split_ok.load(Ordering::Relaxed)
         }
     }
 

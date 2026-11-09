@@ -81,6 +81,34 @@ mod macos_bundle {
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--summarise") {
+        // Re-reads a meeting already on disk. The transcript is the
+        // expensive part and it survives, so extraction can be changed and
+        // measured against a real meeting without recording another.
+        let s = settings::load_settings();
+        let id = match args.get(i + 1).map(String::as_str) {
+            Some("latest") | None => meeting::list().first().map(|m| m.id.clone()),
+            Some(id) => Some(id.to_string()),
+        };
+        let Some(id) = id else {
+            println!("no meetings");
+            return Ok(());
+        };
+        let progress = std::sync::Mutex::new(String::new());
+        match meeting::summarise(&s, &id, &progress) {
+            Ok(sum) => {
+                println!("{id} · {}\n\n{}", sum.model, sum.overview);
+                for (k, v) in [("Decided", &sum.decisions), ("To do", &sum.actions), ("Still open", &sum.questions)] {
+                    println!("\n{k} ({}):", v.len());
+                    for i in v {
+                        println!("  - {i}");
+                    }
+                }
+            }
+            Err(e) => println!("failed: {e}"),
+        }
+        return Ok(());
+    }
     if let Some(i) = args.iter().position(|a| a == "--meeting-check") {
         // Records a meeting for a few seconds and prints what came of it,
         // levels and all. A meeting that transcribes to nothing has to be
