@@ -112,6 +112,19 @@ pub fn app_is_active() -> bool {
     MainThreadMarker::new().is_some_and(|mtm| NSApplication::sharedApplication(mtm).isActive())
 }
 
+/// Steps the app out of the foreground.
+///
+/// Called when the window hides, so that the next Dock click is an
+/// activation. Without it the app usually stays frontmost with nothing on
+/// screen, and clicking its Dock icon changes nothing to notice - macOS
+/// would normally handle that through the delegate's
+/// applicationShouldHandleReopen, which eframe owns.
+pub fn resign_active() {
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm).deactivate();
+    }
+}
+
 /// Logs what the backdrop is doing, beside the settings. Attaching happens
 /// on a window the user can close and reopen at will, and a fault there is
 /// invisible from the outside.

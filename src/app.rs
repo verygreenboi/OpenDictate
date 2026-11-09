@@ -158,6 +158,9 @@ pub struct DictateApp {
     /// What the window's visibility was last set to, so it is only sent when
     /// it changes.
     window_shown: Option<bool>,
+    /// When the window was hidden, so the app can step out of the
+    /// foreground a moment later rather than during the hide.
+    resign_at: Option<std::time::Instant>,
     /// When that happened, and how many times the Dock tile has been set
     /// since: the Dock can put its cached icon back during launch, so this
     /// is applied again a second and three seconds later.
@@ -246,6 +249,7 @@ impl DictateApp {
             blurred_window: None,
             was_active: true,
             window_shown: None,
+            resign_at: None,
             window_since: None,
             icon_tries: 0,
         };
@@ -311,6 +315,16 @@ impl DictateApp {
                 self.focus_main = true;
             }
             self.was_active = active;
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(at) = self.resign_at {
+            if at.elapsed().as_millis() > 250 {
+                self.resign_at = None;
+                if !self.window_open {
+                    crate::macos_look::resign_active();
+                    self.was_active = false;
+                }
+            }
         }
         // A closing root means quit; the real window closes on its own below.
         if self.shot.is_none() && !self.quitting && ctx.input(|i| i.viewport().close_requested()) {
@@ -865,6 +879,15 @@ impl DictateApp {
             let vctx = ui.ctx().clone();
             if visibility_changed {
                 vctx.send_viewport_cmd(egui::ViewportCommand::Visible(want_visible));
+                // Stepping out of the foreground as the window goes makes
+                // the next Dock click an activation, which is the only
+                // signal there is that the user wants it back. Not in this
+                // frame though: done while the window is still going away,
+                // AppKit puts the app straight back in front.
+                #[cfg(target_os = "macos")]
+                if !want_visible {
+                    self.resign_at = Some(std::time::Instant::now());
+                }
             }
             if focus {
                 vctx.send_viewport_cmd(egui::ViewportCommand::Focus);
