@@ -127,8 +127,15 @@ pub struct DictateApp {
     quitting: bool,
     /// The meeting being recorded, if any.
     pub meeting: Option<crate::meeting::Session>,
-    /// Which stored meeting the Meetings page is showing.
+    /// Which stored meeting the Meetings page is showing, and its summary
+    /// if one has been made - read once when it opens rather than off disk
+    /// on every frame.
     pub open_meeting: Option<String>,
+    pub open_summary: Option<crate::meeting::Summary>,
+    /// The meeting being summarised, and how far it has got.
+    pub summarising: Option<String>,
+    pub summary_progress: Arc<Mutex<String>>,
+    summary_rx: Option<Receiver<(String, Result<crate::meeting::Summary, String>)>>,
     /// The backdrop blur can only be attached once the real window exists,
     /// which is a frame or two after it is asked for.
     blurred: bool,
@@ -209,6 +216,10 @@ impl DictateApp {
             quitting: false,
             meeting: None,
             open_meeting: None,
+            open_summary: None,
+            summarising: None,
+            summary_progress: Arc::new(Mutex::new(String::new())),
+            summary_rx: None,
             blurred: false,
             window_since: None,
             icon_tries: 0,
@@ -368,9 +379,16 @@ impl DictateApp {
         if let Some(session) = self.meeting.take() {
             self.notify("Finishing the meeting…", false);
             let id = session.stop();
-            self.open_meeting = Some(id);
+            self.open_meeting(id.clone());
             self.page = Page::Meetings;
-            self.notify("Meeting saved", false);
+            // The whole point of the end-of-meeting summary is that nobody
+            // has to ask for it.
+            if crate::meeting::transcript(&id).is_empty() {
+                self.notify("Meeting saved, but nothing was transcribed", true);
+            } else {
+                self.notify("Meeting saved · summarising", false);
+                self.start_summary(id);
+            }
             return;
         }
         if self.recording.is_some() || self.busy.is_some() {
@@ -384,6 +402,51 @@ impl DictateApp {
             }
             Err(e) => self.notify(e, true),
         }
+    }
+
+    /// Reads the meeting back and works out what it came to, on a thread:
+    /// a long meeting is a dozen model calls and the window must stay alive.
+    pub fn start_summary(&mut self, id: String) {
+        if self.summarising.is_some() {
+            self.notify("Already summarising a meeting.", true);
+            return;
+        }
+        let (tx, rx) = channel();
+        let progress = self.summary_progress.clone();
+        let settings = self.s.clone();
+        let for_thread = id.clone();
+        std::thread::spawn(move || {
+            let out = crate::meeting::summarise(&settings, &for_thread, &progress);
+            let _ = tx.send((for_thread, out));
+        });
+        if let Ok(mut p) = self.summary_progress.lock() {
+            *p = "Reading the meeting…".into();
+        }
+        self.summarising = Some(id);
+        self.summary_rx = Some(rx);
+    }
+
+    /// Picks up a finished summary. Called once a frame.
+    fn collect_summary(&mut self) {
+        let Some(rx) = &self.summary_rx else { return };
+        let Ok((id, out)) = rx.try_recv() else { return };
+        self.summary_rx = None;
+        self.summarising = None;
+        match out {
+            Ok(summary) => {
+                if self.open_meeting.as_deref() == Some(id.as_str()) {
+                    self.open_summary = Some(summary);
+                }
+                self.notify("Meeting summarised", false);
+            }
+            Err(e) => self.notify(e, true),
+        }
+    }
+
+    /// Opens a stored meeting, with whatever summary it already has.
+    pub fn open_meeting(&mut self, id: String) {
+        self.open_summary = crate::meeting::summary(&id);
+        self.open_meeting = Some(id);
     }
 
     pub fn start_recording(&mut self, action: Action) {
@@ -900,6 +963,7 @@ impl eframe::App for DictateApp {
             #[cfg(target_os = "macos")]
             crate::macos_look::set_backdrop_tint(theme::sheer_rgba());
         }
+        self.collect_summary();
         self.window_lifecycle(ctx);
         while let Ok(e) = self.hk_rx.try_recv() {
             if self.capturing_key.is_none() {

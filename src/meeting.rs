@@ -342,3 +342,193 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Summarising, at the end
+
+/// What a meeting came to. Built once when the meeting stops, and kept
+/// beside the transcript so it is never recomputed by accident.
+#[derive(Clone, Default, Serialize, Deserialize, Debug)]
+pub struct Summary {
+    pub overview: String,
+    pub decisions: Vec<String>,
+    pub actions: Vec<String>,
+    /// Questions nothing in the meeting answered.
+    pub questions: Vec<String>,
+    pub model: String,
+    pub made_at: u64,
+}
+
+/// Small on purpose. At 450 words a 3B model stops listing and starts
+/// summarising, and found one action in five; at 180 it found four. The
+/// limit is attention, not context.
+const BLOCK_WORDS: usize = 180;
+
+const MAP: &str = "You list what happened in one part of a meeting transcript. You are not summarising it: \
+you are going through it and writing down every item you find, including small ones.\n\n\
+The transcript has no speaker labels; write \"someone\" where you cannot tell.\n\n\
+One line per item, each line starting with exactly one of:\n\n\
+DECISION: something the meeting agreed, settled or chose.\n\
+QUESTION: something asked that this part does not answer.\n\
+ACTION: something a person said they would do.\n\n\
+Rules:\n\
+- Work through the part in order and catch every item. Missing one is the main way to do this badly.\n\
+- Only what is in the transcript. Never add, guess or round out. If the part is thin, write few lines.\n\
+- One item per line, under twenty words. No headings, no numbering, no blank lines, no commentary.";
+
+const OVERVIEW: &str = "You are writing the opening of a meeting summary for someone who missed it.\n\n\
+Two or three sentences, plain and factual, saying what the meeting was about and what came of it. \
+No bullet points, no preamble, no sign-off. Only what the notes say.";
+
+const STILL_OPEN: &str = "You are checking which questions from a meeting were left unanswered.\n\n\
+You get a list of questions and a list of what the meeting decided and assigned. Output only the \
+questions that nothing in those lists answers, one per line, exactly as they were written. \
+No numbering, no commentary. If all of them were answered, output nothing.";
+
+fn summary_path(id: &str) -> PathBuf {
+    root().join(id).join("summary.json")
+}
+
+pub fn summary(id: &str) -> Option<Summary> {
+    std::fs::read_to_string(summary_path(id)).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
+/// Collapses lines that say the same thing. Two blocks often catch one
+/// decision in different words, and the merge is far safer done here than by
+/// asking a small model to do it.
+///
+/// By shared words rather than by prefix: one real meeting produced "Legal's
+/// concerns about annual contracts remain unaddressed" and "Nobody has heard
+/// back from legal regarding annual contract concerns", which agree on
+/// everything that matters and share no opening at all.
+fn dedupe(items: Vec<String>) -> Vec<String> {
+    // Words too common to count as agreement.
+    const NOISE: [&str; 24] = [
+        "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "is", "are", "was", "were",
+        "be", "will", "that", "this", "it", "with", "by", "at", "someone", "about",
+    ];
+    fn words(s: &str) -> std::collections::HashSet<String> {
+        s.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 2 && !NOISE.contains(w))
+            .map(|w| w.trim_end_matches('s').to_string())
+            .collect()
+    }
+    let mut kept: Vec<(String, std::collections::HashSet<String>)> = Vec::new();
+    for item in items {
+        let w = words(&item);
+        if w.is_empty() {
+            continue;
+        }
+        let dup = kept.iter().any(|(_, seen)| {
+            let shared = w.intersection(seen).count();
+            // Against the smaller of the two, so a long restatement of a
+            // short point still counts as the same point.
+            shared * 10 >= w.len().min(seen.len()) * 6
+        });
+        if !dup {
+            kept.push((item, w));
+        }
+    }
+    kept.into_iter().map(|(i, _)| i).collect()
+}
+
+fn strip_bullet(line: &str) -> String {
+    line.trim().trim_start_matches(['-', '*', '•', ' ']).trim_start_matches(|c: char| c.is_ascii_digit()).trim_start_matches(['.', ')', ' ']).trim().to_string()
+}
+
+/// Reads a meeting's transcript and works out what it came to.
+///
+/// Map then reduce: every block is listed separately, then the lists are
+/// merged here in code and the model is asked only for the two things code
+/// cannot do - the opening paragraph, and which questions went unanswered.
+pub fn summarise(s: &Settings, id: &str, progress: &Mutex<String>) -> Result<Summary, String> {
+    let segments = transcript(id);
+    if segments.is_empty() {
+        return Err("There is nothing in this meeting to summarise.".into());
+    }
+    let model = if s.meeting_model.trim().is_empty() { None } else { Some(s.meeting_model.trim()) };
+
+    let mut blocks: Vec<String> = Vec::new();
+    let mut buf: Vec<&str> = Vec::new();
+    let mut words = 0usize;
+    for seg in &segments {
+        buf.push(&seg.text);
+        words += seg.text.split_whitespace().count();
+        if words >= BLOCK_WORDS {
+            blocks.push(buf.join(" "));
+            buf.clear();
+            words = 0;
+        }
+    }
+    if !buf.is_empty() {
+        blocks.push(buf.join(" "));
+    }
+
+    let (mut decisions, mut actions, mut questions) = (Vec::new(), Vec::new(), Vec::new());
+    for (i, block) in blocks.iter().enumerate() {
+        if let Ok(mut p) = progress.lock() {
+            *p = format!("Reading part {} of {}…", i + 1, blocks.len());
+        }
+        let user = format!("Part {} of {}:\n\n{block}", i + 1, blocks.len());
+        let out = crate::engines::chat_as(s, model, MAP, &[], &user)?;
+        for line in out.lines() {
+            let line = strip_bullet(line);
+            let upper = line.to_uppercase();
+            let (bucket, prefix) = if upper.starts_with("DECISION") {
+                (&mut decisions, "DECISION")
+            } else if upper.starts_with("ACTION") {
+                (&mut actions, "ACTION")
+            } else if upper.starts_with("QUESTION") {
+                (&mut questions, "QUESTION")
+            } else {
+                continue;
+            };
+            let item = line[prefix.len()..].trim_start_matches([':', ' ']).trim().to_string();
+            if item.split_whitespace().count() >= 2 {
+                bucket.push(item);
+            }
+        }
+    }
+    let decisions = dedupe(decisions);
+    let actions = dedupe(actions);
+    let questions = dedupe(questions);
+
+    if let Ok(mut p) = progress.lock() {
+        *p = "Writing it up…".into();
+    }
+    let notes = format!(
+        "Decisions:\n{}\n\nActions:\n{}",
+        decisions.join("\n"),
+        actions.join("\n")
+    );
+    let overview = crate::engines::chat_as(s, model, OVERVIEW, &[], &notes)?.trim().to_string();
+
+    let open = if questions.is_empty() {
+        Vec::new()
+    } else {
+        if let Ok(mut p) = progress.lock() {
+            *p = "Checking what went unanswered…".into();
+        }
+        let asked = format!("Questions:\n{}\n\n{notes}", questions.join("\n"));
+        let kept = crate::engines::chat_as(s, model, STILL_OPEN, &[], &asked)?;
+        // Only questions that were actually asked: the filter is allowed to
+        // drop, never to invent.
+        let known: Vec<String> = questions.iter().map(|q| q.to_lowercase()).collect();
+        kept.lines()
+            .map(strip_bullet)
+            .filter(|l| known.contains(&l.to_lowercase()))
+            .collect()
+    };
+
+    let out = Summary {
+        overview,
+        decisions,
+        actions,
+        questions: open,
+        model: model.unwrap_or(&s.ollama_model).to_string(),
+        made_at: now(),
+    };
+    let _ = std::fs::write(summary_path(id), serde_json::to_string_pretty(&out).unwrap_or_default());
+    Ok(out)
+}

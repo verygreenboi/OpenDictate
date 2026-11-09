@@ -228,3 +228,38 @@ Three things only showed up by running a real meeting — forty seconds of
   in Audio input: that setting names a cpal device, and mapping the name
   onto a Core Audio id is a job of its own.
 - No summary, no open questions, no actions. That is part two.
+
+## Part two: the summary
+
+Written once, when the meeting stops. No rolling view: a summary of the
+whole thing is worth more than a running one, and it costs a dozen model
+calls either way.
+
+Map then reduce. Every block of the transcript is listed separately -
+decisions, questions, actions, one per line with a prefix - and the lists
+are merged in code. The model is asked for only the two things code cannot
+do: the opening paragraph, and which questions nothing answered.
+
+Three things were measured rather than assumed, against a planted transcript
+with known contents (`scratchpad/fixture.py`, scored by `summ.py`):
+
+- **Block size decides everything.** At 450 words a 3B model stops listing
+  and starts summarising: one action found in five. At 180 words, four in
+  five. Same prompt, same model. The limit is attention, not context.
+- **Merging belongs in code.** Deduping lists is exact; asking a small model
+  to merge them is not. Dedupe compares shared words rather than prefixes,
+  because one real meeting produced "Legal's concerns about annual contracts
+  remain unaddressed" and "Nobody has heard back from legal regarding annual
+  contract concerns" - the same point, sharing no opening.
+- **llama3.2:3b is the ceiling.** On the fixture: 4 of 5 actions, 2 of 4
+  decisions, 1 of 2 open questions kept, one answered question wrongly left
+  open. On a real recording it classified the same item as a question in one
+  run and an action in the next. Hence a separate `meeting_model` setting:
+  dictation keeps the small fast model, meetings get a larger one.
+
+## Still open
+
+- **Speakers.** The microphone and the tap are averaged into one track, which
+  is both why the speakers echo into the recording and why "what are my
+  tasks" cannot be answered. Keeping them as two channels fixes both.
+- The summary quality above is 3B quality. Re-measure on the larger model.

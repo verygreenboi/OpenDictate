@@ -1447,7 +1447,48 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         ui.label(b(&meta.title, 24.0, theme::TEXT()));
         let length = meta.ended.map(|e| hhmmss((e - meta.started) as f32)).unwrap_or_else(|| "unfinished".into());
         ui.label(t(format!("{} · {length}", meta.source), 13.0, theme::MUTED()));
-        ui.add_space(14.0);
+        ui.add_space(16.0);
+
+        // What it came to, before what was said.
+        if app.summarising.as_deref() == Some(id.as_str()) {
+            let step = app.summary_progress.lock().map(|p| p.clone()).unwrap_or_default();
+            theme::ink_card().inner_margin(Margin::same(16)).show(ui, |ui| {
+                ui.set_width(w - 32.0);
+                status(ui, State::Warn, if step.is_empty() { "Summarising…".into() } else { step });
+            });
+            ui.add_space(14.0);
+        } else if let Some(sum) = app.open_summary.clone() {
+            theme::ink_card().inner_margin(Margin::same(18)).show(ui, |ui| {
+                ui.set_width(w - 36.0);
+                ui.label(b("Summary", 19.0, theme::TEXT()));
+                ui.add_space(6.0);
+                ui.label(para(&sum.overview, 14.0, theme::TEXT()));
+                for (title, items, empty) in [
+                    ("Decided", &sum.decisions, "Nothing was settled."),
+                    ("To do", &sum.actions, "Nobody took anything on."),
+                    ("Still open", &sum.questions, "Nothing was left hanging."),
+                ] {
+                    ui.add_space(14.0);
+                    ui.label(m(title, 13.0, theme::MUTED()));
+                    ui.add_space(4.0);
+                    if items.is_empty() {
+                        ui.label(t(empty, 13.0, theme::FAINT()));
+                    } else {
+                        let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+                        bullets(ui, &refs, 14.0, theme::TEXT());
+                    }
+                }
+                ui.add_space(12.0);
+                ui.label(t(format!("Written by {}", sum.model), 12.0, theme::FAINT()));
+            });
+            ui.add_space(14.0);
+        } else if !crate::meeting::transcript(&id).is_empty() {
+            if btn(ui, "Summarise").clicked() {
+                app.start_summary(id.clone());
+            }
+            ui.add_space(14.0);
+        }
+
         let segs = crate::meeting::transcript(&id);
         if segs.is_empty() {
             let why = if meta.peak < 0.001 {
@@ -1506,7 +1547,7 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         });
         let click = ui.interact(resp.response.rect, ui.id().with(&m.id), Sense::click());
         if click.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            app.open_meeting = Some(m.id.clone());
+            app.open_meeting(m.id.clone());
         }
         ui.add_space(10.0);
     }

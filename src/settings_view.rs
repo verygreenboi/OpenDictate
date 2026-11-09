@@ -393,6 +393,28 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
                         });
                 }
             });
+            // Summarising runs once when a meeting ends, so it can afford a
+            // model dictation could not: a 3B finds four actions in five but
+            // only two decisions in four, and cannot tell an answered
+            // question from an open one.
+            row(
+                ui,
+                "Meeting summaries",
+                "Written at the end of a meeting, so a slower, larger model is worth it here.",
+                300.0,
+                |ui| {
+                    let same = "Same as above";
+                    let shown = if app.s.meeting_model.trim().is_empty() { same.to_string() } else { app.s.meeting_model.clone() };
+                    egui::ComboBox::from_id_salt("mmodel").width(300.0).selected_text(shown).show_ui(ui, |ui| {
+                        let mut pick = app.s.meeting_model.clone();
+                        changed |= crate::views::combo_value(ui, &mut pick, String::new(), same).changed();
+                        for name in &list {
+                            changed |= crate::views::combo_value(ui, &mut pick, name.clone(), name).changed();
+                        }
+                        app.s.meeting_model = pick;
+                    });
+                },
+            );
             // Field and action first, suggestions under them and captioned.
             // The three names used to sit on top looking like buttons that
             // download, when all they do is fill the box.

@@ -170,6 +170,11 @@ pub struct Settings {
     pub text_engine: TextEngine,
     pub ollama_url: String,
     pub ollama_model: String,
+    /// The model meetings are summarised with, when it differs from the
+    /// clean-up one. Summarising runs once at the end of a meeting, so it can
+    /// afford a bigger model than dictation can; empty means use the same.
+    #[serde(default)]
+    pub meeting_model: String,
     pub text_url: String,
     pub text_key: String,
     pub text_model: String,
@@ -287,6 +292,7 @@ impl Default for Settings {
             text_engine: TextEngine::Ollama,
             ollama_url: "http://localhost:11434".into(),
             ollama_model: "llama3.2:3b".into(),
+            meeting_model: String::new(),
             text_url: "http://localhost:1234/v1".into(),
             text_key: String::new(),
             text_model: String::new(),

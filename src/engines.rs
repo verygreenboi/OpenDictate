@@ -305,10 +305,26 @@ pub fn ask(s: &Settings, selection: &str, instruction: &str) -> Result<String, S
 }
 
 fn chat(s: &Settings, system: &str, shots: &[(String, &'static str)], user: &str) -> Result<String, String> {
+    chat_as(s, None, system, shots, user)
+}
+
+/// The same, on a model of the caller's choosing. Meetings use this to run a
+/// bigger model than dictation would put up with.
+pub fn chat_as(
+    s: &Settings,
+    model_override: Option<&str>,
+    system: &str,
+    shots: &[(String, &'static str)],
+    user: &str,
+) -> Result<String, String> {
     let (base, key, model) = match s.text_engine {
         TextEngine::Ollama => (format!("{}/v1", trim_url(&s.ollama_url)), String::new(), s.ollama_model.clone()),
         TextEngine::OpenAiCompatible => (trim_url(&s.text_url), s.text_key.trim().to_string(), s.text_model.clone()),
         TextEngine::Off => unreachable!(),
+    };
+    let model = match model_override.map(str::trim).filter(|m| !m.is_empty()) {
+        Some(m) => m.to_string(),
+        None => model,
     };
     if model.trim().is_empty() {
         return Err("No text model chosen. Pick one in Models.".into());

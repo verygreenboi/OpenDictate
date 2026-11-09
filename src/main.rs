@@ -98,6 +98,21 @@ fn main() -> eframe::Result<()> {
                 for seg in meeting::transcript(&id) {
                     println!("[{:>7}ms {:4.1}s] {}", seg.at_ms, seg.secs, seg.text);
                 }
+                if !meeting::transcript(&id).is_empty() {
+                    let progress = std::sync::Mutex::new(String::new());
+                    match meeting::summarise(&s, &id, &progress) {
+                        Ok(sum) => {
+                            println!("\n--- summary ({}) ---\n{}", sum.model, sum.overview);
+                            for (k, v) in [("Decided", &sum.decisions), ("To do", &sum.actions), ("Still open", &sum.questions)] {
+                                println!("\n{k}:");
+                                for i in v {
+                                    println!("  - {i}");
+                                }
+                            }
+                        }
+                        Err(e) => println!("\nsummary failed: {e}"),
+                    }
+                }
             }
         }
         return Ok(());
