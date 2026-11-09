@@ -46,30 +46,57 @@ screen. This is the one to use.
   winit. No new crate, no C shim.
 - The development Mac is macOS 27.0.1, well past the floor.
 
-### What was not checked, and must be before anything is built
+### What the spike found
 
-- **The API floor is macOS 14.2–14.4**; this app's `LSMinimumSystemVersion` is
-  11.0. Taps have to be resolved at runtime with a mic-only fallback below
-  that, or the bundle's floor has to move and leave those users behind.
-- **Permission.** Tapping needs the user's Screen & System Audio Recording
-  consent, and reports say the prompt appears when the aggregate device
-  *starts*, not when the tap is created — so the failure mode is a meeting
-  that records silence from everyone but you until it is granted.
-- **It is reported to fail outright** in some setups with
-  `kAudioHardwareIllegalOperationError` and no prompt at all.
+Run on macOS 27.0.1 against the real API, playing a system sound at itself
+and recording the result:
 
-**So step one is a spike, not a feature:** a throwaway binary that creates a
-tap, builds an aggregate device from it plus the default input, starts it, and
-writes ten seconds to a WAV. If that file has both sides of a call in it, the
-rest of this document is buildable. If it does not, meeting mode ships
-mic-only in v1 and says so plainly in the UI.
+```
+AudioHardwareCreateProcessTap      -> 0   (tap id 152)
+AudioHardwareCreateAggregateDevice -> 0   (device 153)
+tap format                            48000 Hz, 2 ch, 32 bit float
+AudioDeviceCreateIOProcID          -> 0
+AudioDeviceStart                   -> 0
+19.0 s captured, peak 0.359, rms 0.023
+```
 
-### If the spike passes
+The envelope shows four discrete bursts separated by silence, matching the
+sound as it played, so this is system output and not noise on an open line.
+**System audio capture works, with no virtual driver and no screen
+recording.** The reported `kAudioHardwareIllegalOperationError` did not
+appear.
 
-One aggregate device containing the tap and the microphone, read as a single
-stream, so mixing is Core Audio's problem rather than ours. The existing
-`audio::Recording` grows a second constructor; everything downstream sees the
-same samples it does today.
+The sequence that worked, for the implementation to follow:
+
+1. `CATapDescription::initStereoGlobalTapButExcludeProcesses` with an empty
+   exclude list, `setPrivate(true)`, mute behaviour `Unmuted` — so the
+   meeting is still audible while it is recorded.
+2. `AudioHardwareCreateProcessTap`, then read the description's `UUID`.
+3. A private aggregate device whose `kAudioAggregateDeviceTapListKey` holds
+   one sub-tap with that UUID, and whose main sub-device is the current
+   default output's UID.
+4. `AudioDeviceCreateIOProcID` + `AudioDeviceStart`; samples arrive in the
+   IO proc's input buffer list as interleaved f32.
+
+### What the spike did not settle
+
+- **Permission.** No prompt appeared — but the spike ran from this terminal,
+  which already holds Screen & System Audio Recording (it has been taking
+  screenshots all session), and a bare binary inherits the launching
+  process's TCC identity. The signed bundle is a different subject and will
+  have to ask for itself. That is the next thing to test, and it has to be
+  tested from the packaged app, not from a terminal.
+- **The microphone in the same device.** The spike's aggregate contains only
+  the tap. Meetings need the mic in it too, through
+  `kAudioAggregateDeviceSubDeviceListKey`, so both sides arrive mixed on one
+  stream.
+- **Format conversion.** The tap gives 48 kHz stereo float; whisper.cpp wants
+  16 kHz mono. Downmix and resample on the way to disk.
+- **The OS floor** is still macOS 14.2-14.4 against this bundle's 11.0, so
+  the tap path has to be resolved at runtime with a mic-only fallback.
+- **Output changes mid-meeting** — headphones unplugged, AirPods connecting.
+  The aggregate is built around one output UID; it likely needs rebuilding
+  on a device-change notification without dropping the recording.
 
 ## Capture pipeline
 
