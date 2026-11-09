@@ -38,6 +38,10 @@ pub struct Meta {
     pub ended: Option<u64>,
     /// "You and the room" or "Everyone on the call", for the UI to show.
     pub source: String,
+    /// Loudest sample in the whole meeting, 0 to 1. The only way to tell a
+    /// quiet room from a recorder that heard nothing.
+    #[serde(default)]
+    pub peak: f32,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -54,6 +58,11 @@ pub struct Live {
     pub segments: Vec<Segment>,
     /// Set when a chunk failed to transcribe; the recording carries on.
     pub warning: Option<String>,
+    /// Loudest sample seen since the meeting started. Zero after the first
+    /// chunk means nothing is reaching the recorder at all, which is a very
+    /// different problem from a quiet room and has to be said differently.
+    pub peak: f32,
+    pub chunks: usize,
 }
 
 pub fn root() -> PathBuf {
@@ -144,6 +153,15 @@ fn wav_16k_mono(samples: &[f32]) -> Vec<u8> {
     out
 }
 
+/// A line per chunk, beside the transcript. A meeting that comes back empty
+/// has to be able to say why without being run again under a debugger.
+fn log(dir: &Path, line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("levels.log")) {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 fn append_segment(dir: &Path, seg: &Segment) {
     use std::io::Write;
     if let Ok(line) = serde_json::to_string(seg) {
@@ -177,6 +195,7 @@ impl Session {
             started,
             ended: None,
             source: source.to_string(),
+            peak: 0.0,
         };
         let _ = std::fs::write(dir.join("meta.json"), serde_json::to_string_pretty(&meta).unwrap_or_default());
 
@@ -204,6 +223,7 @@ impl Session {
         let path = self.dir.join("meta.json");
         if let Some(mut m) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()) {
             m.ended = Some(now());
+            m.peak = self.live.lock().map(|l| l.peak).unwrap_or(0.0);
             let _ = std::fs::write(&path, serde_json::to_string_pretty(&m).unwrap_or_default());
         }
     }
@@ -258,10 +278,25 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
             // it does for a dictation someone is holding a key down for.
             let rms = (samples.iter().map(|x| x * x).sum::<f32>() / samples.len().max(1) as f32).sqrt();
             let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
-            // Measured on this machine: a chunk of speech came in at peak
-            // 0.52 / rms 0.027, the silent tail after it at 0.036 / 0.0044.
-            // The gate sits between them, nearer the noise.
-            if peak < 0.06 || rms < 0.006 {
+            // The gate was first set from one loud test - speech at peak
+            // 0.52 against a silent tail at 0.036 - and a real call went
+            // straight through it: two meetings, no transcript, no clue why.
+            // It sits just above digital silence now, and every chunk's
+            // level is written to levels.log so the next surprise is
+            // readable instead of guessed at.
+            log(&dir, &format!("{index:03} {secs:5.1}s peak {peak:.4} rms {rms:.5}"));
+            if let Ok(mut l) = live.lock() {
+                l.peak = l.peak.max(peak);
+                l.chunks += 1;
+            }
+            // Two conditions, because one threshold could not separate the
+            // cases seen so far: speech at peak 0.43, a noisy tail at 0.036
+            // that hallucinated "Akuipito", a quieter one at 0.021 that
+            // hallucinated a whole sentence. Anything below 0.03 is the noise
+            // floor, and a short tail has to be obviously speech to count -
+            // that is where the inventions live.
+            if peak < 0.03 || rms < 0.002 || (secs < 5.0 && peak < 0.10) {
+                log(&dir, "    skipped: too quiet to be speech");
                 let _ = std::fs::remove_file(&path);
                 at_ms += (secs * 1000.0) as u64;
                 index += 1;
@@ -273,14 +308,16 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
 
             match crate::engines::transcribe(&s, &wav) {
                 Ok(text) if !text.trim().is_empty() => {
+                    log(&dir, &format!("    transcribed: {}", text.trim().chars().take(60).collect::<String>()));
                     let seg = Segment { at_ms, secs, text: text.trim().to_string() };
                     append_segment(&dir, &seg);
                     if let Ok(mut l) = live.lock() {
                         l.segments.push(seg);
                     }
                 }
-                Ok(_) => {}
+                Ok(text) => log(&dir, &format!("    transcribed to nothing ({} chars raw)", text.len())),
                 Err(e) => {
+                    log(&dir, &format!("    failed: {e}"));
                     if let Ok(mut l) = live.lock() {
                         l.warning = Some(e);
                     }
@@ -294,6 +331,12 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
             continue;
         }
         if ending {
+            if let Ok(mut l) = live.lock() {
+                if l.chunks == 0 {
+                    l.warning = Some("No audio reached the recorder.".into());
+                    log(&dir, "no audio arrived at all");
+                }
+            }
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(250));

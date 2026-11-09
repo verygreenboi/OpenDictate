@@ -81,6 +81,27 @@ mod macos_bundle {
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--meeting-check") {
+        // Records a meeting for a few seconds and prints what came of it,
+        // levels and all. A meeting that transcribes to nothing has to be
+        // explainable without a rebuild.
+        let secs: u64 = args.get(i + 1).and_then(|a| a.parse().ok()).unwrap_or(40);
+        let s = settings::load_settings();
+        match meeting::Session::start(&s) {
+            Err(e) => println!("could not start: {e}"),
+            Ok(session) => {
+                println!("recording {secs}s: {}", session.source);
+                let dir = session.dir.clone();
+                std::thread::sleep(std::time::Duration::from_secs(secs));
+                let id = session.stop();
+                println!("\n{}", std::fs::read_to_string(dir.join("levels.log")).unwrap_or_default());
+                for seg in meeting::transcript(&id) {
+                    println!("[{:>7}ms {:4.1}s] {}", seg.at_ms, seg.secs, seg.text);
+                }
+            }
+        }
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--tap-check") {
         // Writes as well as prints: the only run that proves anything about
         // the permission is one launched by LaunchServices as the signed

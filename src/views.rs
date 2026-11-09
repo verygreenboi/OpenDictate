@@ -1450,7 +1450,17 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
         ui.add_space(14.0);
         let segs = crate::meeting::transcript(&id);
         if segs.is_empty() {
-            ui.label(para("Nothing was transcribed from this meeting.", 14.0, theme::FAINT()));
+            let why = if meta.peak < 0.001 {
+                "Nothing reached the recorder at all. The meeting may have been on a device Open Dictate could not tap.".to_string()
+            } else {
+                format!(
+                    "Nothing was loud enough to transcribe. The loudest moment was {:.3} out of 1.0, which is about the level of a quiet room.",
+                    meta.peak
+                )
+            };
+            ui.label(para(why, 14.0, theme::MUTED()));
+            ui.add_space(6.0);
+            ui.label(t("Levels for every chunk are in levels.log beside this transcript.", 12.5, theme::FAINT()));
         }
         for seg in &segs {
             transcript_line(ui, seg, w);

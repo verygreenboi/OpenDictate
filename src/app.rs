@@ -779,10 +779,19 @@ impl DictateApp {
     }
 
     fn indicator(&mut self, ctx: &egui::Context) {
-        let state = if let Some((rec, a, _)) = &self.recording {
-            Some((true, *a, rec.level(), rec.elapsed()))
+        // A meeting runs for an hour with the window closed. Without this
+        // there is nothing on screen saying the Mac is being listened to,
+        // which is both unnerving and easy to leave running by accident.
+        let meeting = self.meeting.as_ref().map(|m| {
+            let (elapsed, peak) = m.live.lock().map(|l| (l.elapsed, l.peak)).unwrap_or((0.0, 0.0));
+            (elapsed, peak)
+        });
+        let state = if let Some((elapsed, peak)) = meeting {
+            Some((true, None, peak, elapsed))
+        } else if let Some((rec, a, _)) = &self.recording {
+            Some((true, Some(*a), rec.level(), rec.elapsed()))
         } else {
-            self.busy.as_ref().map(|(a, t)| (false, *a, 0.0, t.elapsed().as_secs_f32()))
+            self.busy.as_ref().map(|(a, t)| (false, Some(*a), 0.0, t.elapsed().as_secs_f32()))
         };
         let Some((listening, action, level, secs)) = state else { return };
         if !self.s.show_indicator || self.shot.is_some() {
@@ -822,7 +831,11 @@ impl DictateApp {
                 let c = if listening { egui::Color32::WHITE } else { theme::ACCENT() };
                 p.rect_filled(egui::Rect::from_center_size(egui::pos2(x, rect.center().y), egui::vec2(3.0, h)), 1.5, c);
             }
-            let label = if listening { action.label().to_string() } else { "Thinking…".to_string() };
+            let label = match action {
+                None => "Meeting".to_string(),
+                Some(a) if listening => a.label().to_string(),
+                Some(_) => "Thinking…".to_string(),
+            };
             p.text(
                 egui::pos2(left + 64.0, rect.center().y),
                 egui::Align2::LEFT_CENTER,
@@ -833,7 +846,14 @@ impl DictateApp {
             p.text(
                 egui::pos2(rect.right() - 20.0, rect.center().y),
                 egui::Align2::RIGHT_CENTER,
-                format!("{}:{:02}", secs as u32 / 60, secs as u32 % 60),
+                {
+                    let s = secs as u32;
+                    if s >= 3600 {
+                        format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+                    } else {
+                        format!("{}:{:02}", s / 60, s % 60)
+                    }
+                },
                 egui::FontId::new(13.0, egui::FontFamily::Proportional),
                 theme::MUTED(),
             );
