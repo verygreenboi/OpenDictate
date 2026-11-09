@@ -69,7 +69,10 @@ pub struct DictateApp {
     pub page: Page,
     pub settings_tab: Option<SettingsTab>,
 
-    pub recording: Option<(Recording, Action, String)>,
+    /// The live recording, what it is for, and the copy of the selection
+    /// being fetched alongside it. Ask grabs the selection on a thread so the
+    /// microphone opens at once instead of after the clipboard settles.
+    pub recording: Option<(Recording, Action, Option<std::thread::JoinHandle<String>>)>,
     pub busy: Option<(Action, Instant)>,
     jobs_tx: Sender<JobOut>,
     jobs_rx: Receiver<JobOut>,
@@ -339,7 +342,9 @@ impl DictateApp {
     // Recording and the model pipeline
 
     pub fn start_recording(&mut self, action: Action) {
-        let selection = if action == Action::Ask { grab_selection() } else { String::new() };
+        // The selection is not needed until the speaking stops, seconds from
+        // now, so fetching it must not hold the microphone shut meanwhile.
+        let selection = (action == Action::Ask).then(|| std::thread::spawn(grab_selection));
         self.mic_test = None;
         match Recording::start(&self.s.microphone, self.s.input_gain) {
             Ok(r) => self.recording = Some((r, action, selection)),
@@ -369,6 +374,8 @@ impl DictateApp {
 
     pub fn stop_recording(&mut self, ctx: &egui::Context) {
         let Some((rec, action, selection)) = self.recording.take() else { return };
+        // Long finished by now; joining only collects it.
+        let selection = selection.and_then(|h| h.join().ok()).unwrap_or_default();
         let clip = rec.finish();
         let when = settings::now_secs();
         let seconds = clip.seconds();
@@ -913,17 +920,54 @@ fn cmd_key() -> enigo::Key {
 }
 
 /// Copies whatever is selected in the front app (for "Ask anything").
+/// Copies whatever is selected in the front app, and puts the clipboard back.
+///
+/// This used to empty the clipboard, sleep a flat 180ms and read it. When a
+/// copy took longer than that - a big selection, a slow app, a busy machine -
+/// the read came back empty, which is indistinguishable from nothing being
+/// selected. Ask would then quietly write something new instead of rewriting
+/// what was highlighted, with nothing to say why.
+///
+/// A marker tells the two apart. Anything other than the marker is the copy,
+/// so it can stop the moment the copy lands rather than always waiting, and
+/// the marker still sitting there means nothing was selected.
 fn grab_selection() -> String {
+    use std::time::{Duration, Instant};
     let Ok(mut cb) = arboard::Clipboard::new() else { return String::new() };
-    let before = cb.get_text().unwrap_or_default();
-    let _ = cb.set_text(String::new());
-    if send_combo(cmd_key(), 'c').is_err() {
-        return String::new();
+    // Whatever is on the clipboard goes back afterwards, on every path out of
+    // here, including the one where the keystroke fails.
+    let text_before = cb.get_text().ok();
+    let image_before = if text_before.is_none() { cb.get_image().ok() } else { None };
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let marker = format!("\u{200B}open-dictate-selection-{stamp}");
+    let mut found = String::new();
+    if cb.set_text(marker.clone()).is_ok() && send_combo(cmd_key(), 'c').is_ok() {
+        // Most copies land inside 50ms; the ceiling is for the ones that do
+        // not, and is only ever reached when nothing was selected at all.
+        let deadline = Instant::now() + Duration::from_millis(500);
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(15));
+            if let Ok(t) = cb.get_text() {
+                if t != marker {
+                    found = t;
+                    break;
+                }
+            }
+        }
     }
-    std::thread::sleep(std::time::Duration::from_millis(180));
-    let sel = cb.get_text().unwrap_or_default();
-    let _ = cb.set_text(before);
-    sel
+
+    if let Some(t) = text_before {
+        let _ = cb.set_text(t);
+    } else if let Some(img) = image_before {
+        let _ = cb.set_image(img);
+    } else {
+        let _ = cb.clear();
+    }
+    found
 }
 
 /// Puts the text into the front app by pasting it, then puts the old clipboard back.
