@@ -266,8 +266,38 @@ with known contents (`scratchpad/fixture.py`, scored by `summ.py`):
   labelled by which side was louder and transcribed from that side alone,
   so on speakers the mixed double-hearing is gone. Only a chunk where both
   talk at once falls back to the mix.
-- **The model does not always honour the labels.** Segments carry "you" or
-  "them" correctly, but asked to write "you" for one and "someone" for the
-  other, the 3B still attributed one of the others' lines to you. Another
-  thing to re-measure on the larger model.
+- ~~**The model does not always honour the labels.**~~ Fixed, but not by the
+  model. See below.
 - The summary quality above is 3B quality. Re-measure on the larger model.
+
+## What the larger model was worth
+
+qwen2.5:7b, scored on the same fixture as llama3.2:3b:
+
+| | 3B | 7B |
+|---|---|---|
+| actions | 4 / 5 | 4 / 5 |
+| decisions | 2 / 4 | 2 / 4 |
+| open questions kept | 1 / 2 | 1 / 2 |
+| answered questions wrongly left open | 1 | 1 |
+
+Identical. The prediction that a bigger model would lift extraction was
+wrong, and two and a half times the size bought nothing measurable here.
+Some of the remaining misses are the fixture being strict rather than the
+model being weak - "put the export button back" is listed as a decision in
+the ground truth and both models filed it as an action, which is defensible.
+
+Attribution was the other reason for the swap, and the 7B failed it the same
+way: given "I will update the roadmap" spoken by someone else, both models
+wrote "You will update the roadmap", whatever the prompt said about who was
+talking. The transcript's own pronoun beats any instruction about it.
+
+So that one is handled in code instead. Blocks now break where the speaker
+changes as well as on length, so each block has one speaker, and the pronoun
+on each extracted line is corrected afterwards from the chunk's measured
+label - a fact, not a request. The same recording now gives "Someone will
+update the roadmap this afternoon".
+
+The meeting model is set to qwen2.5:7b, but on this evidence llama3.2:3b
+would do as well and run faster. The setting exists; which model goes in it
+is open.

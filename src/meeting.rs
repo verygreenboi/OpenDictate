@@ -462,6 +462,27 @@ fn dedupe(items: Vec<String>) -> Vec<String> {
     kept.into_iter().map(|(i, _)| i).collect()
 }
 
+/// Puts the right person in front of an extracted line.
+///
+/// Telling the model who was speaking is not enough: given "I will update the
+/// roadmap" from someone else's mouth, both llama3.2:3b and qwen2.5:7b wrote
+/// "You will update the roadmap". The transcript's own pronoun wins over any
+/// instruction, so the pronoun is corrected here instead, where it is a fact
+/// rather than a request.
+fn attribute(item: &str, voice: &str) -> String {
+    let swap: &[(&str, &str)] = match voice {
+        "them" => &[("You will ", "Someone will "), ("You ", "Someone "), ("I will ", "Someone will "), ("I'll ", "Someone will "), ("We will ", "They will ")],
+        "you" => &[("Someone will ", "You will "), ("I will ", "You will "), ("I'll ", "You will ")],
+        _ => return item.to_string(),
+    };
+    for (from, to) in swap {
+        if let Some(rest) = item.strip_prefix(*from) {
+            return format!("{to}{rest}");
+        }
+    }
+    item.to_string()
+}
+
 fn strip_bullet(line: &str) -> String {
     line.trim().trim_start_matches(['-', '*', '•', ' ']).trim_start_matches(|c: char| c.is_ascii_digit()).trim_start_matches(['.', ')', ' ']).trim().to_string()
 }
@@ -478,35 +499,40 @@ pub fn summarise(s: &Settings, id: &str, progress: &Mutex<String>) -> Result<Sum
     }
     let model = if s.meeting_model.trim().is_empty() { None } else { Some(s.meeting_model.trim()) };
 
-    let mut blocks: Vec<String> = Vec::new();
+    // Blocks break where the speaker changes as well as on length, so every
+    // block has one speaker and the model is never asked to tell them apart
+    // inside one. Both models ignored an inline [the others] marker and
+    // followed the transcript's own "I will", putting other people's actions
+    // on the user.
+    let mut blocks: Vec<(String, String)> = Vec::new();
     let mut buf: Vec<String> = Vec::new();
     let mut words = 0usize;
+    let mut voice = String::new();
     for seg in &segments {
-        // Who was speaking goes in with the words, so an action can be
-        // attributed instead of always landing on "someone".
-        let line = match seg.voice.as_str() {
-            "you" => format!("[you] {}", seg.text),
-            "them" => format!("[the others] {}", seg.text),
-            _ => seg.text.clone(),
-        };
-        words += seg.text.split_whitespace().count();
-        buf.push(line);
-        if words >= BLOCK_WORDS {
-            blocks.push(buf.join(" "));
+        if !buf.is_empty() && (seg.voice != voice || words >= BLOCK_WORDS) {
+            blocks.push((voice.clone(), buf.join(" ")));
             buf.clear();
             words = 0;
         }
+        voice = seg.voice.clone();
+        words += seg.text.split_whitespace().count();
+        buf.push(seg.text.clone());
     }
     if !buf.is_empty() {
-        blocks.push(buf.join(" "));
+        blocks.push((voice, buf.join(" ")));
     }
 
     let (mut decisions, mut actions, mut questions) = (Vec::new(), Vec::new(), Vec::new());
-    for (i, block) in blocks.iter().enumerate() {
+    for (i, (voice, block)) in blocks.iter().enumerate() {
         if let Ok(mut p) = progress.lock() {
             *p = format!("Reading part {} of {}…", i + 1, blocks.len());
         }
-        let user = format!("Part {} of {}:\n\n{block}", i + 1, blocks.len());
+        let who = match voice.as_str() {
+            "you" => "Everything in this part was said by the person this summary is for.",
+            "them" => "Everything in this part was said by other people on the call, not by the person this summary is for.",
+            _ => "This part has several people talking.",
+        };
+        let user = format!("Part {} of {}. {who}\n\n{block}", i + 1, blocks.len());
         let out = crate::engines::chat_as(s, model, MAP, &[], &user)?;
         for line in out.lines() {
             let line = strip_bullet(line);
@@ -522,7 +548,7 @@ pub fn summarise(s: &Settings, id: &str, progress: &Mutex<String>) -> Result<Sum
             };
             let item = line[prefix.len()..].trim_start_matches([':', ' ']).trim().to_string();
             if item.split_whitespace().count() >= 2 {
-                bucket.push(item);
+                bucket.push(attribute(&item, voice));
             }
         }
     }
