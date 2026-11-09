@@ -1556,14 +1556,31 @@ fn meetings(app: &mut DictateApp, ui: &mut egui::Ui, w: f32) {
 fn transcript_line(ui: &mut egui::Ui, seg: &crate::meeting::Segment, w: f32) {
     ui.horizontal_top(|ui| {
         ui.add_space(2.0);
-        let (r, _) = ui.allocate_exact_size(vec2(52.0, 20.0), Sense::hover());
-        ui.painter().text(
+        let (r, _) = ui.allocate_exact_size(vec2(88.0, 20.0), Sense::hover());
+        let p = ui.painter();
+        p.text(
             pos2(r.left(), r.top()),
             Align2::LEFT_TOP,
             hhmmss(seg.at_ms as f32 / 1000.0),
             FontId::new(12.0, theme::medium()),
             theme::FAINT(),
         );
+        // Who was talking, from which side of the call was louder.
+        let (who, colour) = match seg.voice.as_str() {
+            "you" => ("you", theme::GREEN()),
+            "them" => ("them", theme::ACCENT()),
+            "both" => ("both", theme::FAINT()),
+            _ => ("", theme::FAINT()),
+        };
+        if !who.is_empty() {
+            p.text(
+                pos2(r.left() + 46.0, r.top()),
+                Align2::LEFT_TOP,
+                who,
+                FontId::new(11.5, theme::medium()),
+                colour,
+            );
+        }
         ui.add(egui::Label::new(para(&seg.text, 14.0, theme::TEXT())).wrap());
     });
     ui.add_space(10.0);

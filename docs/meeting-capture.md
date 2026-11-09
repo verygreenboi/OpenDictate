@@ -259,7 +259,15 @@ with known contents (`scratchpad/fixture.py`, scored by `summ.py`):
 
 ## Still open
 
-- **Speakers.** The microphone and the tap are averaged into one track, which
-  is both why the speakers echo into the recording and why "what are my
-  tasks" cannot be answered. Keeping them as two channels fixes both.
+- ~~**Speakers.**~~ Done. The two are kept apart: the aggregate lists its
+  sub-devices before its taps, so the microphone's channels come first -
+  checked rather than assumed, with only system audio playing the mic
+  measured peak 0.067 against the tap's 0.23 and 0.359. Each chunk is
+  labelled by which side was louder and transcribed from that side alone,
+  so on speakers the mixed double-hearing is gone. Only a chunk where both
+  talk at once falls back to the mix.
+- **The model does not always honour the labels.** Segments carry "you" or
+  "them" correctly, but asked to write "you" for one and "someone" for the
+  other, the 3B still attributed one of the others' lines to you. Another
+  thing to re-measure on the larger model.
 - The summary quality above is 3B quality. Re-measure on the larger model.

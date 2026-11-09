@@ -49,6 +49,10 @@ pub struct Segment {
     pub at_ms: u64,
     pub secs: f32,
     pub text: String,
+    /// "you", "them" or "both", from which side of the call was louder.
+    /// Older meetings have none, hence the default.
+    #[serde(default)]
+    pub voice: String,
 }
 
 /// What the UI reads while a meeting is running.
@@ -243,14 +247,17 @@ impl Drop for Session {
 fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<AtomicBool>, s: Settings) {
     let rate = cap.rate;
     let per_chunk = (rate * CHUNK_SECS as f64) as usize;
-    let mut buf: Vec<f32> = Vec::with_capacity(per_chunk);
+    let mut mine: Vec<f32> = Vec::with_capacity(per_chunk);
+    let mut theirs: Vec<f32> = Vec::with_capacity(per_chunk);
     let mut index = 0usize;
     let mut at_ms = 0u64;
     let started = std::time::Instant::now();
 
     loop {
         let ending = stop.load(Ordering::Relaxed);
-        buf.extend(cap.drain());
+        let got = cap.drain();
+        mine.extend(got.mine);
+        theirs.extend(got.theirs);
         if let Ok(mut l) = live.lock() {
             l.elapsed = started.elapsed().as_secs_f32();
         }
@@ -260,31 +267,51 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         // chunk for it - 133 of them, in the first run of this.
         if ending {
             cap.pause();
-            buf.extend(cap.drain());
+            let last = cap.drain();
+            mine.extend(last.mine);
+            theirs.extend(last.theirs);
         }
-        let full = buf.len() >= per_chunk;
-        if full || (ending && !buf.is_empty()) {
-            let take = if full { per_chunk } else { buf.len() };
-            let chunk: Vec<f32> = buf.drain(..take).collect();
-            let secs = chunk.len() as f32 / rate as f32;
-            let samples = to_16k(&chunk, rate);
+        let have = mine.len().max(theirs.len());
+        let full = have >= per_chunk;
+        if full || (ending && have > 0) {
+            let take = if full { per_chunk } else { have };
+            let a: Vec<f32> = mine.drain(..take.min(mine.len())).collect();
+            let b: Vec<f32> = theirs.drain(..take.min(theirs.len())).collect();
+            let secs = take as f32 / rate as f32;
+
+            let you = to_16k(&a, rate);
+            let them = to_16k(&b, rate);
+            let level = |v: &[f32]| {
+                let rms = (v.iter().map(|x| x * x).sum::<f32>() / v.len().max(1) as f32).sqrt();
+                let peak = v.iter().fold(0f32, |m, x| m.max(x.abs()));
+                (peak, rms)
+            };
+            let (you_peak, you_rms) = level(&you);
+            let (them_peak, them_rms) = level(&them);
+
+            // Transcribe whichever side was talking rather than the mix.
+            // On speakers the microphone hears the call a few milliseconds
+            // late, so a mixed track carries everything twice and whisper
+            // sometimes writes it twice; one side alone does not.
+            let (voice, samples) = if you_rms > them_rms * 2.5 {
+                ("you", you)
+            } else if them_rms > you_rms * 2.5 {
+                ("them", them)
+            } else {
+                let n = you.len().min(them.len());
+                ("both", (0..n).map(|i| (you[i] + them[i]) * 0.5).collect())
+            };
+            let (peak, rms) = level(&samples);
+
             let path = dir.join("audio").join(format!("{index:03}.wav"));
             let wav = wav_16k_mono(&samples);
             let _ = std::fs::write(&path, &wav);
-
-            // Whisper invents speech out of near-silence: the quiet tail of
-            // one test came back as "Akuipito. Akuipito. Akuipito.". A
-            // meeting is mostly silence, so this gate matters more here than
-            // it does for a dictation someone is holding a key down for.
-            let rms = (samples.iter().map(|x| x * x).sum::<f32>() / samples.len().max(1) as f32).sqrt();
-            let peak = samples.iter().fold(0f32, |m, x| m.max(x.abs()));
-            // The gate was first set from one loud test - speech at peak
-            // 0.52 against a silent tail at 0.036 - and a real call went
-            // straight through it: two meetings, no transcript, no clue why.
-            // It sits just above digital silence now, and every chunk's
-            // level is written to levels.log so the next surprise is
-            // readable instead of guessed at.
-            log(&dir, &format!("{index:03} {secs:5.1}s peak {peak:.4} rms {rms:.5}"));
+            log(
+                &dir,
+                &format!(
+                    "{index:03} {secs:5.1}s {voice:<4} you {you_peak:.3}/{you_rms:.4}  them {them_peak:.3}/{them_rms:.4}"
+                ),
+            );
             if let Ok(mut l) = live.lock() {
                 l.peak = l.peak.max(peak);
                 l.chunks += 1;
@@ -300,7 +327,7 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
                 let _ = std::fs::remove_file(&path);
                 at_ms += (secs * 1000.0) as u64;
                 index += 1;
-                if ending && buf.is_empty() {
+                if ending && mine.is_empty() && theirs.is_empty() {
                     break;
                 }
                 continue;
@@ -308,8 +335,8 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
 
             match crate::engines::transcribe(&s, &wav) {
                 Ok(text) if !text.trim().is_empty() => {
-                    log(&dir, &format!("    transcribed: {}", text.trim().chars().take(60).collect::<String>()));
-                    let seg = Segment { at_ms, secs, text: text.trim().to_string() };
+                    log(&dir, &format!("    {voice}: {}", text.trim().chars().take(60).collect::<String>()));
+                    let seg = Segment { at_ms, secs, text: text.trim().to_string(), voice: voice.to_string() };
                     append_segment(&dir, &seg);
                     if let Ok(mut l) = live.lock() {
                         l.segments.push(seg);
@@ -373,6 +400,8 @@ QUESTION: something asked that this part does not answer.\n\
 ACTION: something a person said they would do.\n\n\
 Rules:\n\
 - Work through the part in order and catch every item. Missing one is the main way to do this badly.\n\
+- Lines marked [you] were spoken by the person this summary is for; [the others] by everyone else. \
+Say \"you\" for the first and \"someone\" for the second.\n\
 - Only what is in the transcript. Never add, guess or round out. If the part is thin, write few lines.\n\
 - One item per line, under twenty words. No headings, no numbering, no blank lines, no commentary.";
 
@@ -450,11 +479,18 @@ pub fn summarise(s: &Settings, id: &str, progress: &Mutex<String>) -> Result<Sum
     let model = if s.meeting_model.trim().is_empty() { None } else { Some(s.meeting_model.trim()) };
 
     let mut blocks: Vec<String> = Vec::new();
-    let mut buf: Vec<&str> = Vec::new();
+    let mut buf: Vec<String> = Vec::new();
     let mut words = 0usize;
     for seg in &segments {
-        buf.push(&seg.text);
+        // Who was speaking goes in with the words, so an action can be
+        // attributed instead of always landing on "someone".
+        let line = match seg.voice.as_str() {
+            "you" => format!("[you] {}", seg.text),
+            "them" => format!("[the others] {}", seg.text),
+            _ => seg.text.clone(),
+        };
         words += seg.text.split_whitespace().count();
+        buf.push(line);
         if words >= BLOCK_WORDS {
             blocks.push(buf.join(" "));
             buf.clear();

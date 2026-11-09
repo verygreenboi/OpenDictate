@@ -23,9 +23,17 @@ use std::sync::{Arc, Mutex};
 /// Everything the IO proc needs. Handed over as the client pointer, and
 /// reclaimed when the capture stops.
 struct Sink {
-    /// Mono, at the device's own rate: every channel of every frame averaged,
-    /// which is what mixes the microphone and the tap into one voice track.
-    samples: Mutex<Vec<f32>>,
+    /// Mono per channel group, at the device's own rate. Keeping the
+    /// microphone and the tap apart is what lets a meeting tell what you
+    /// said from what everyone else said.
+    mine: Mutex<Vec<f32>>,
+    theirs: Mutex<Vec<f32>>,
+    /// How many of the device's input channels belong to the microphone.
+    /// The aggregate lists its sub-devices before its taps, so the mic's
+    /// channels come first - checked by level, not taken on trust.
+    mic_channels: usize,
+    /// Set while diagnosing: the loudest sample seen on each channel.
+    probe: Mutex<Vec<f32>>,
 }
 
 pub struct SystemCapture {
@@ -36,6 +44,14 @@ pub struct SystemCapture {
     pub rate: f64,
     /// Whether the microphone made it into the same device, or only the tap.
     pub has_mic: bool,
+}
+
+/// One pass of audio, with the two sides kept apart.
+pub struct Chunk {
+    /// The microphone: you, and the room you are in.
+    pub mine: Vec<f32>,
+    /// The system's output: everyone else on the call.
+    pub theirs: Vec<f32>,
 }
 
 // The Core Audio ids are plain integers and the sink is reference counted;
@@ -99,7 +115,11 @@ unsafe extern "C-unwind" fn io_proc(
         return 0;
     }
 
-    let mut mono = vec![0f32; frames];
+    let mut mine = vec![0f32; frames];
+    let mut theirs = vec![0f32; frames];
+    let (mut n_mine, mut n_theirs) = (0usize, 0usize);
+    let mut peaks = vec![0f32; channels];
+    let mut index = 0usize;
     for b in buffers {
         if b.mData.is_null() || b.mNumberChannels == 0 {
             continue;
@@ -107,17 +127,45 @@ unsafe extern "C-unwind" fn io_proc(
         let ch = b.mNumberChannels as usize;
         let n = (b.mDataByteSize as usize / 4 / ch).min(frames);
         let data = std::slice::from_raw_parts(b.mData as *const f32, n * ch);
-        for (f, slot) in mono.iter_mut().enumerate().take(n) {
-            let mut sum = 0f32;
-            for c in 0..ch {
-                sum += data[f * ch + c];
+        for c in 0..ch {
+            let global = index + c;
+            let into_mine = global < sink.mic_channels;
+            if into_mine {
+                n_mine += 1;
+            } else {
+                n_theirs += 1;
             }
-            *slot += sum;
+            let target = if into_mine { &mut mine } else { &mut theirs };
+            let mut peak = 0f32;
+            for f in 0..n {
+                let v = data[f * ch + c];
+                target[f] += v;
+                let a = v.abs();
+                if a > peak {
+                    peak = a;
+                }
+            }
+            if global < peaks.len() {
+                peaks[global] = peak;
+            }
         }
+        index += ch;
     }
-    let scale = 1.0 / channels as f32;
-    if let Ok(mut out) = sink.samples.lock() {
-        out.extend(mono.iter().map(|s| s * scale));
+    if let Ok(mut out) = sink.mine.lock() {
+        let scale = 1.0 / n_mine.max(1) as f32;
+        out.extend(mine.iter().map(|s| s * scale));
+    }
+    if let Ok(mut out) = sink.theirs.lock() {
+        let scale = 1.0 / n_theirs.max(1) as f32;
+        out.extend(theirs.iter().map(|s| s * scale));
+    }
+    if let Ok(mut p) = sink.probe.lock() {
+        if p.len() < peaks.len() {
+            p.resize(peaks.len(), 0.0);
+        }
+        for (slot, v) in p.iter_mut().zip(peaks) {
+            *slot = slot.max(v);
+        }
     }
     0
 }
@@ -129,6 +177,36 @@ fn status(st: i32) -> String {
         format!("{st} '{}'", String::from_utf8_lossy(&b))
     } else {
         st.to_string()
+    }
+}
+
+/// A device's input channel count, read from its stream configuration.
+fn input_channels(device: AudioObjectID) -> usize {
+    unsafe {
+        let a = AudioObjectPropertyAddress {
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioObjectPropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain,
+        };
+        let mut size = 0u32;
+        if AudioObjectGetPropertyDataSize(device, NonNull::from(&a), 0, std::ptr::null(), NonNull::from(&mut size)) != 0 {
+            return 0;
+        }
+        let mut buf = vec![0u8; size as usize];
+        if AudioObjectGetPropertyData(
+            device,
+            NonNull::from(&a),
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut size),
+            NonNull::new(buf.as_mut_ptr() as *mut c_void).unwrap(),
+        ) != 0
+        {
+            return 0;
+        }
+        let list = &*(buf.as_ptr() as *const AudioBufferList);
+        let buffers = std::slice::from_raw_parts(list.mBuffers.as_ptr(), list.mNumberBuffers as usize);
+        buffers.iter().map(|b| b.mNumberChannels as usize).sum()
     }
 }
 
@@ -238,7 +316,15 @@ impl SystemCapture {
                 rate = if fmt.mSampleRate > 0.0 { fmt.mSampleRate } else { 48_000.0 };
             }
 
-            let sink = Box::into_raw(Box::new(Arc::new(Sink { samples: Mutex::new(Vec::new()) })));
+            // The mic's own channel count, so the IO proc knows where its
+            // channels stop and the tap's begin.
+            let mic_channels = mic.filter(|_| has_mic).map(|d| input_channels(d)).unwrap_or(0);
+            let sink = Box::into_raw(Box::new(Arc::new(Sink {
+                mine: Mutex::new(Vec::new()),
+                theirs: Mutex::new(Vec::new()),
+                mic_channels,
+                probe: Mutex::new(Vec::new()),
+            })));
             let mut proc_id: AudioDeviceIOProcID = None;
             let st = AudioDeviceCreateIOProcID(device, Some(io_proc), sink as *mut c_void, NonNull::from(&mut proc_id));
             if st != 0 {
@@ -271,11 +357,32 @@ impl SystemCapture {
         }
     }
 
-    /// Everything captured since the last call, mono at `rate`.
-    pub fn drain(&self) -> Vec<f32> {
+    /// Everything captured since the last call, the two sides apart, each
+    /// mono at `rate`.
+    pub fn drain(&self) -> Chunk {
         unsafe {
             let sink = &*self.sink;
-            sink.samples.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default()
+            Chunk {
+                mine: sink.mine.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default(),
+                theirs: sink.theirs.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default(),
+            }
+        }
+    }
+
+    /// Loudest sample seen on each of the device's input channels since the
+    /// capture opened. Only used to check that the microphone really does
+    /// come before the tap.
+    pub fn channel_peaks(&self) -> Vec<f32> {
+        unsafe {
+            let sink = &*self.sink;
+            sink.probe.lock().map(|p| p.clone()).unwrap_or_default()
+        }
+    }
+
+    pub fn mic_channels(&self) -> usize {
+        unsafe {
+            let sink = &*self.sink;
+            sink.mic_channels
         }
     }
 }
@@ -303,7 +410,7 @@ impl Drop for SystemCapture {
 /// identity of whatever launched it.
 pub fn check(secs: u64) -> String {
     let mut r = String::new();
-    match SystemCapture::start(None) {
+    match SystemCapture::start(default_input()) {
         Err(e) => r.push_str(&format!("{e}\nVERDICT: no system audio.\n")),
         Ok(cap) => {
             r.push_str(&format!("opened at {} Hz\n", cap.rate));
@@ -316,8 +423,16 @@ pub fn check(secs: u64) -> String {
             });
             std::thread::sleep(std::time::Duration::from_secs(secs));
             let _ = player.join();
-            let s = cap.drain();
-            let peak = s.iter().fold(0f32, |m, x| m.max(x.abs()));
+            let c = cap.drain();
+            let pk = |v: &[f32]| v.iter().fold(0f32, |m, x| m.max(x.abs()));
+            r.push_str(&format!(
+                "mic channels {}, per-channel peaks {:?}\n",
+                cap.mic_channels(),
+                cap.channel_peaks().iter().map(|p| (p * 1000.0).round() / 1000.0).collect::<Vec<_>>()
+            ));
+            r.push_str(&format!("you {:.4}  them {:.4}\n", pk(&c.mine), pk(&c.theirs)));
+            let s = c.theirs;
+            let peak = pk(&s);
             r.push_str(&format!("captured {} samples, peak {peak:.4}\n", s.len()));
             r.push_str(if s.is_empty() {
                 "VERDICT: nothing arrived - the IO proc never ran.\n"
