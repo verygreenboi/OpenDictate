@@ -13,7 +13,7 @@
 use objc2::rc::Retained;
 use objc2::AnyThread;
 use objc2_core_audio::*;
-use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
+use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp, AudioTimeStampFlags};
 use objc2_core_foundation::{CFDictionary, CFString};
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use std::ffi::c_void;
@@ -29,6 +29,9 @@ struct Sink {
     /// said from what everyone else said.
     mine: Mutex<Vec<f32>>,
     theirs: Mutex<Vec<f32>>,
+    /// Host time of the first sample in `theirs`, written under its lock so a drain takes both together.
+    first_host_ns: Mutex<Option<u64>>,
+    timebase: (u32, u32),
     /// How many of the device's input channels belong to the microphone.
     /// The aggregate lists its sub-devices before its taps, so the mic's
     /// channels come first - checked by level, not taken on trust.
@@ -64,6 +67,27 @@ pub struct Chunk {
     pub mine: Vec<f32>,
     /// The system's output: everyone else on the call.
     pub theirs: Vec<f32>,
+    pub first_host_ns: Option<u64>,
+}
+
+#[repr(C)]
+struct MachTimebase {
+    numer: u32,
+    denom: u32,
+}
+
+unsafe extern "C" {
+    fn mach_timebase_info(info: *mut MachTimebase) -> i32;
+}
+
+fn timebase() -> (u32, u32) {
+    let mut tb = MachTimebase { numer: 0, denom: 0 };
+    let ok = unsafe { mach_timebase_info(&mut tb) } == 0 && tb.denom != 0;
+    if ok { (tb.numer, tb.denom) } else { (1, 1) }
+}
+
+pub(crate) fn host_to_ns(ticks: u64, numer: u32, denom: u32) -> u64 {
+    (ticks as u128 * numer as u128 / denom as u128) as u64
 }
 
 // The Core Audio ids are plain integers and the sink is reference counted;
@@ -99,7 +123,7 @@ unsafe extern "C-unwind" fn io_proc(
     _device: AudioObjectID,
     _now: NonNull<AudioTimeStamp>,
     input: NonNull<AudioBufferList>,
-    _input_time: NonNull<AudioTimeStamp>,
+    input_time: NonNull<AudioTimeStamp>,
     _output: NonNull<AudioBufferList>,
     _output_time: NonNull<AudioTimeStamp>,
     client: *mut c_void,
@@ -181,6 +205,12 @@ unsafe extern "C-unwind" fn io_proc(
         out.extend(mix_mic(mic, frames));
     }
     if let Ok(mut out) = sink.theirs.lock() {
+        let t = input_time.as_ref();
+        if t.mFlags.contains(AudioTimeStampFlags::HostTimeValid) {
+            if let Ok(mut first) = sink.first_host_ns.lock() {
+                first.get_or_insert(host_to_ns(t.mHostTime, sink.timebase.0, sink.timebase.1));
+            }
+        }
         let scale = 1.0 / n_theirs.max(1) as f32;
         out.extend(theirs.iter().map(|s| s * scale));
     }
@@ -359,6 +389,8 @@ impl SystemCapture {
             let sink = Box::into_raw(Box::new(Arc::new(Sink {
                 mine: Mutex::new(Vec::new()),
                 theirs: Mutex::new(Vec::new()),
+                first_host_ns: Mutex::new(None),
+                timebase: timebase(),
                 mic_channels,
                 tap_channels,
                 split_ok: AtomicBool::new(mic_channels > 0 && tap_channels > 0),
@@ -401,10 +433,12 @@ impl SystemCapture {
     pub fn drain(&self) -> Chunk {
         unsafe {
             let sink = &*self.sink;
-            Chunk {
-                mine: sink.mine.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default(),
-                theirs: sink.theirs.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default(),
-            }
+            let mine = sink.mine.lock().map(|mut s| std::mem::take(&mut *s)).unwrap_or_default();
+            let (theirs, first_host_ns) = match sink.theirs.lock() {
+                Ok(mut s) => (std::mem::take(&mut *s), sink.first_host_ns.lock().ok().and_then(|mut f| f.take())),
+                Err(_) => (Vec::new(), None),
+            };
+            Chunk { mine, theirs, first_host_ns }
         }
     }
 
@@ -492,4 +526,40 @@ pub fn check(secs: u64) -> String {
         }
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe extern "C" {
+        fn mach_absolute_time() -> u64;
+    }
+
+    #[test]
+    fn host_ticks_convert_to_nanoseconds_with_the_timebase() {
+        assert_eq!(host_to_ns(3_000, 125, 3), 125_000);
+        assert_eq!(host_to_ns(987_654_321, 1, 1), 987_654_321);
+    }
+
+    #[test]
+    #[ignore = "needs a real Mac, speakers and the System Audio Recording permission"]
+    fn tap_only_capture_hears_speech_played_by_the_system_and_times_its_first_sample() {
+        let cap = SystemCapture::start(None).expect("tap-only aggregate opens");
+        let before = std::time::Instant::now();
+        let mut say = std::process::Command::new("say").arg("Testing the call side capture").spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(4));
+        let _ = say.wait();
+        let c = cap.drain();
+        let peak = c.theirs.iter().fold(0f32, |m, x| m.max(x.abs()));
+        println!("rate {} has_mic {} samples {} peak {peak:.4} first_host_ns {:?}", cap.rate, cap.has_mic, c.theirs.len(), c.first_host_ns);
+        assert!(!cap.has_mic);
+        assert!(peak > 0.05, "peak {peak}");
+        let first = c.first_host_ns.expect("first sample timed");
+        let (numer, denom) = timebase();
+        let now = host_to_ns(unsafe { mach_absolute_time() }, numer, denom);
+        let elapsed = before.elapsed().as_nanos() as u64;
+        println!("first sample {} ms before the drain, opened {} ms before it", (now - first) / 1_000_000, elapsed / 1_000_000);
+        assert!(first < now && now - first < elapsed + 1_000_000_000);
+    }
 }
