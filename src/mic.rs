@@ -1,5 +1,3 @@
-//! The meeting microphone as its own cpal stream, outside the system-audio aggregate.
-
 use crate::audio;
 use crate::tap::{mix_mic, MIC_INPUTS};
 use cpal::traits::StreamTrait;
@@ -20,6 +18,19 @@ struct Captured {
     first_ns: Option<u64>,
 }
 
+impl Captured {
+    fn push(&mut self, mono: &[f32], ns: u64) {
+        if self.samples.is_empty() {
+            self.first_ns = Some(ns);
+        }
+        self.samples.extend_from_slice(mono);
+    }
+
+    fn drain(&mut self) -> (Vec<f32>, Option<u64>) {
+        (std::mem::take(&mut self.samples), self.first_ns.take())
+    }
+}
+
 pub struct MicStream {
     stream: cpal::Stream,
     captured: Arc<Mutex<Captured>>,
@@ -29,7 +40,6 @@ pub struct MicStream {
 }
 
 impl MicStream {
-    /// `name` is a microphone name ("" = system default). Never applies input gain.
     pub fn start(name: &str) -> Result<Self, String> {
         let device = audio::find_input(name)?;
         let expected = audio::input_channels(&device)?;
@@ -38,14 +48,7 @@ impl MicStream {
         let (c, er) = (captured.clone(), error.clone());
         let (stream, rate, channels) = audio::input_stream(
             &device,
-            move |data, host_ns| {
-                let mono = pick_channels(data, expected);
-                let mut c = c.lock().unwrap();
-                if c.samples.is_empty() {
-                    c.first_ns = Some(host_ns);
-                }
-                c.samples.extend_from_slice(&mono);
-            },
+            move |data, host_ns| c.lock().unwrap().push(&pick_channels(data, expected), host_ns),
             move |e| *er.lock().unwrap() = Some(e),
         )?;
         if channels != expected {
@@ -56,10 +59,8 @@ impl MicStream {
         Ok(Self { stream, captured, error, rate, info })
     }
 
-    /// Samples at the device rate since the last drain, and the host ns of the first of them.
     pub fn drain(&self) -> (Vec<f32>, Option<u64>) {
-        let mut c = self.captured.lock().unwrap();
-        (std::mem::take(&mut c.samples), c.first_ns.take())
+        self.captured.lock().unwrap().drain()
     }
 
     pub fn rate(&self) -> f64 {
@@ -83,8 +84,18 @@ impl MicStream {
 
 #[cfg(test)]
 mod tests {
-    use super::pick_channels;
+    use super::{pick_channels, Captured};
     use crate::tap::mix_mic;
+
+    #[test]
+    fn first_host_ns_is_the_earliest_callback_since_the_last_drain_and_drain_clears_it() {
+        let mut c = Captured::default();
+        c.push(&[0.1, 0.2], 100);
+        c.push(&[0.3], 200);
+        assert_eq!(c.drain(), (vec![0.1, 0.2, 0.3], Some(100)));
+        c.push(&[0.4], 300);
+        assert_eq!(c.drain(), (vec![0.4], Some(300)));
+    }
 
     fn peak(v: &[f32]) -> f32 {
         v.iter().fold(0f32, |m, s| m.max(s.abs()))

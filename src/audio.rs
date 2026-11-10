@@ -34,7 +34,6 @@ pub fn default_input_name() -> Option<String> {
     cpal::default_host().default_input_device().and_then(|d| device_name(&d))
 }
 
-/// The named microphone ("" = system default), falling back to the default.
 pub(crate) fn find_input(mic: &str) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
     let chosen = if mic.trim().is_empty() {
@@ -60,7 +59,6 @@ pub(crate) fn device_label(device: &cpal::Device) -> String {
     device_name(device).unwrap_or_else(|| "unknown".into())
 }
 
-/// Opens and starts `device` at its default format; `on_data` gets interleaved f32 and the capture host time in ns.
 pub(crate) fn input_stream(
     device: &cpal::Device,
     on_data: impl FnMut(&[f32], u64) + Send + 'static,
@@ -120,7 +118,7 @@ impl Recording {
             .map_err(|e| format!("Microphone unavailable: {e}"))?;
         let (format, expected) = (supported.sample_format(), supported.channels().max(1) as usize);
 
-        let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(48_000 * 30)));
+        let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(supported.sample_rate() as usize * 30)));
         let level = Arc::new(Mutex::new(0.0f32));
 
         fn push(frames: &[f32], gain: f32, channels: usize, out: &Mutex<Vec<f32>>, level: &Mutex<f32>) {
