@@ -63,6 +63,7 @@ const NOTES_INTERVAL_MS: u64 = 30_000;
 const UNREACHABLE: &str = "Can't reach the text model. Check it in Models.";
 const UNREADABLE: &str = "The model's answer couldn't be read.";
 const NOTES_STARVED_MS: u64 = 60_000;
+const IDLE_CHECK: Duration = Duration::from_secs(2);
 const FINAL_WINDOW: Duration = Duration::from_secs(30);
 
 macro_rules! data_rule {
@@ -88,7 +89,9 @@ pub const NOTES_SYSTEM: &str = concat!(data_rule!(), "You keep running notes of 
 Lines are labelled [you], [them] or [both]. \
 Use only the transcript and the notes so far; never add facts. \
 Return JSON with \"summary\", \"decisions\" and \"actions\". \
-\"summary\" is the notes so far updated with the recent transcript, in at most 120 words. \
+\"summary\" is the notes so far updated with the recent transcript, in at most 120 words of plain prose \
+in the third person, such as \"Ann agreed to book the venue.\" \
+Never copy or quote lines from the transcript, and never write the [you], [them] or [both] labels. \
 \"decisions\" lists what the meeting decided or agreed (\"we decided...\"); a decision goes there and never in \"actions\". \
 \"actions\" lists every action point so far, one per person and task. \
 Someone asked to do something has an action point; someone who says they or another person will do something has one too. \
@@ -256,6 +259,13 @@ pub fn parse_suggestions(raw: &str) -> Result<Suggestions, String> {
     })
 }
 
+fn without_labels(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|w| !matches!(w.to_lowercase().as_str(), "[you]" | "[them]" | "[both]"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn parse_notes(raw: &str) -> Result<NotesReply, String> {
     parse_object(raw, |v| {
         let actions = v.get("actions").and_then(|a| a.as_array());
@@ -270,7 +280,7 @@ pub fn parse_notes(raw: &str) -> Result<NotesReply, String> {
                 (!what.is_empty()).then(|| Action { who: text_of(a, "who"), what })
             })
             .collect();
-        Some(NotesReply { summary: text_of(v, "summary"), actions })
+        Some(NotesReply { summary: without_labels(&text_of(v, "summary")), actions })
     })
 }
 
@@ -417,6 +427,18 @@ impl Scheduler {
         Some(job)
     }
 
+    pub fn cancel(&mut self, job: Job) {
+        self.running = None;
+        match job {
+            Job::Suggest => self.suggest_due = true,
+            Job::Notes => self.notes_due = true,
+        }
+    }
+
+    pub fn has_unnoted_segments(&self) -> bool {
+        self.notes_due
+    }
+
     pub fn done(&mut self, job: Job, now_ms: u64) {
         self.running = None;
         if job == Job::Notes {
@@ -440,6 +462,8 @@ pub struct Live {
     pub availability: Option<Availability>,
     #[serde(skip)]
     pub was_ready: bool,
+    #[serde(skip)]
+    pub done: bool,
 }
 
 pub fn step(live: &Mutex<Live>, job: Job, segments: &[Segment], now_ms: u64, chat: &dyn Fn(Job, &str, &str) -> Result<String, String>, log: &dyn Fn(&str)) {
@@ -581,26 +605,43 @@ fn work(memory: u64, meeting: &Mutex<crate::meeting::Live>, ended: &AtomicBool, 
     let segments = || meeting.lock().map(|m| m.segments.clone()).unwrap_or_default();
     let mut sched = Scheduler::new();
     let mut seen = 0;
-    while !ended.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_millis(200));
-        let Ok((count, now_ms)) = meeting.lock().map(|m| (m.segments.len(), ms(m.elapsed))) else { break };
+    let mut catch_up = |sched: &mut Scheduler| {
+        let Ok((count, now_ms)) = meeting.lock().map(|m| (m.segments.len(), ms(m.elapsed))) else { return None };
         for _ in seen..count {
             sched.on_segment();
         }
         seen = count;
-        let Some(s) = consent() else { continue };
-        let Some(job) = sched.next(now_ms) else { continue };
+        Some(now_ms)
+    };
+    let mut checked = std::time::Instant::now();
+    while !ended.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(200));
+        let Some(now_ms) = catch_up(&mut sched) else { break };
+        let Some(job) = sched.next(now_ms) else {
+            if checked.elapsed() >= IDLE_CHECK {
+                checked = std::time::Instant::now();
+                consent();
+            }
+            continue;
+        };
+        checked = std::time::Instant::now();
+        let Some(s) = consent() else {
+            sched.cancel(job);
+            continue;
+        };
         step(live, job, &segments(), now_ms, &|job, system, user| ask(&s, job, system, user), &*w.log);
         sched.done(job, now_ms);
     }
-    if !out_of_time() {
+    catch_up(&mut sched);
+    if sched.has_unnoted_segments() && !out_of_time() {
         if let Some(s) = consent() {
             let now_ms = meeting.lock().map(|m| ms(m.elapsed)).unwrap_or(0);
             step(live, Job::Notes, &segments(), now_ms, &|job, system, user| ask(&s, job, system, user), &*w.log);
         }
     }
-    if let Ok(l) = live.lock() {
+    if let Ok(mut l) = live.lock() {
         save(&w.dir, &l);
+        l.done = true;
     }
 }
 
@@ -888,6 +929,85 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn notes_counting_chat(notes: &Arc<std::sync::atomic::AtomicUsize>) -> impl Fn(&Settings, Job, &str, &str, &dyn Fn() -> bool) -> Result<String, String> + Send + Sync + 'static {
+        let notes = notes.clone();
+        move |_, job, _, _, _| {
+            if job == Job::Notes {
+                notes.fetch_add(1, Ordering::Relaxed);
+                return Ok(r#"{"summary":"s","actions":[]}"#.to_string());
+            }
+            Ok(ASKED.to_string())
+        }
+    }
+
+    fn end_and_wait(live: &Mutex<Live>, ended: &AtomicBool) {
+        ended.store(true, Ordering::Relaxed);
+        wait_for(&|| live.lock().unwrap().done);
+        assert!(live.lock().unwrap().done, "the worker never finished");
+    }
+
+    #[test]
+    fn a_meeting_with_no_transcript_makes_no_final_notes_call() {
+        let s = local_lm(9);
+        let notes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("no-transcript");
+        let current = s.clone();
+        let live = start(s, 16 * GIB, meeting, ended.clone(), worker(&dir, move || current.clone(), notes_counting_chat(&notes)));
+        std::thread::sleep(Duration::from_millis(300));
+        end_and_wait(&live, &ended);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(notes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn nothing_said_since_the_last_notes_means_no_final_notes_call() {
+        let s = local_lm(9);
+        let notes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live { elapsed: 40.0, segments: vec![seg(39_000, "them", "hello")], ..Default::default() }));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("nothing-new");
+        let current = s.clone();
+        let live = start(s, 16 * GIB, meeting, ended.clone(), worker(&dir, move || current.clone(), notes_counting_chat(&notes)));
+        wait_for(&|| notes.load(Ordering::Relaxed) > 0);
+        end_and_wait(&live, &ended);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(notes.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn settings_are_read_only_when_a_job_is_due_or_every_two_seconds() {
+        let s = local_lm(9);
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let current = {
+            let (s, reads) = (s.clone(), reads.clone());
+            move || {
+                reads.fetch_add(1, Ordering::Relaxed);
+                s.clone()
+            }
+        };
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("reads");
+        let live = start(s, 16 * GIB, meeting.clone(), ended.clone(), worker(&dir, current, counting_chat(&calls)));
+        std::thread::sleep(Duration::from_millis(1_000));
+        let idle = reads.load(Ordering::Relaxed);
+        meeting.lock().unwrap().segments.push(seg(0, "them", "hello"));
+        wait_for(&|| calls.load(Ordering::Relaxed) > 0);
+        end_and_wait(&live, &ended);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(idle, 0, "settings were read while idle");
+        assert!(reads.load(Ordering::Relaxed) > 0, "settings were not read before the call");
+    }
+
+    #[test]
+    fn labels_left_in_a_summary_are_removed() {
+        let n = parse_notes(r#"{"summary":"[Both] Tom was asked for the estimate. [you] agreed and [THEM] thanked you.","actions":[]}"#).unwrap();
+        assert_eq!(n.summary, "Tom was asked for the estimate. agreed and thanked you.");
+    }
+
     #[test]
     fn the_last_words_of_a_meeting_reach_the_saved_notes() {
         let s = local_lm(9);
@@ -902,14 +1022,16 @@ mod tests {
         let ended = Arc::new(AtomicBool::new(false));
         let dir = temp_dir("last-words");
         let current = s.clone();
-        start(s, 16 * GIB, meeting.clone(), ended.clone(), worker(&dir, move || current.clone(), chat));
+        let live = start(s, 16 * GIB, meeting.clone(), ended.clone(), worker(&dir, move || current.clone(), chat));
         meeting.lock().unwrap().segments.push(seg(0, "them", "Raj will list the renewing contracts."));
         ended.store(true, Ordering::Relaxed);
         let saved = dir.join("talking_points.json");
         wait_for(&|| saved.exists());
+        wait_for(&|| live.lock().unwrap().done);
         let text = std::fs::read_to_string(&saved).unwrap_or_default();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(text.contains("list the renewing contracts"), "{text}");
+        assert!(live.lock().unwrap().done, "the worker did not say it had finished");
     }
 
     #[test]
@@ -1001,6 +1123,31 @@ mod tests {
         assert!(sug.items.iter().any(|i| i.kind == Kind::Reply), "no reply to a direct question");
         assert!(l.actions.iter().all(|t| t.action.what.split_whitespace().count() >= 2));
         assert!(l.actions.iter().any(|t| t.action.who.to_lowercase().contains("raj")), "Raj's action is missing");
+        assert!(!l.actions.iter().any(|t| t.action.what.contains("Stripe")), "a decision was listed as an action");
+    }
+
+    #[test]
+    #[ignore = "needs LM Studio serving phi-4-mini-instruct-chat-mlx on 127.0.0.1:1234"]
+    fn lm_studio_summarises_a_short_meeting_in_plain_prose() {
+        let mut s = settings(TextEngine::OpenAiCompatible, "http://127.0.0.1:1234/v1");
+        s.text_model = "phi-4-mini-instruct-chat-mlx".into();
+        let segs = [
+            seg(1_000, "both", "Tom, could you send me the cost estimate by Friday?"),
+            seg(5_000, "both", "Also, we decided to meter usage through Stripe."),
+            seg(9_000, "both", "One last thing."),
+        ];
+        let raw = RefCell::new(String::new());
+        let live = Mutex::new(Live::default());
+        step(&live, Job::Notes, &segs, 10_000, &|job, system, user| {
+            let reply = json_chat(&s, job, system, user, &|| true);
+            *raw.borrow_mut() = reply.clone().unwrap_or_default();
+            reply
+        }, &|_| {});
+        let summary = parse_object(&raw.borrow(), |v| Some(text_of(v, "summary"))).unwrap_or_default();
+        let l = live.lock().unwrap();
+        println!("summary: {summary}\nactions: {:?}", l.actions.iter().map(|t| &t.action).collect::<Vec<_>>());
+        assert!(!summary.to_lowercase().contains("[both]") && !summary.to_lowercase().contains("[you]"), "labels in {summary}");
+        assert!(!summary.contains("could you send me"), "the summary quotes the transcript: {summary}");
         assert!(!l.actions.iter().any(|t| t.action.what.contains("Stripe")), "a decision was listed as an action");
     }
 

@@ -182,7 +182,6 @@ pub struct Session {
     pub dir: PathBuf,
     pub source: String,
     pub live: Arc<Mutex<Live>>,
-    #[allow(dead_code)]
     pub talking: Option<Arc<Mutex<crate::talking::Live>>>,
     talking_ended: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
