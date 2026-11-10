@@ -98,6 +98,7 @@ impl Cutter {
 
         if you_rms.max(them_rms) < VOICED_RMS {
             self.quiet_run += 1;
+            self.turn_run = 0;
             if self.quiet_run >= PAUSE_FRAMES {
                 out.extend(self.take_stretch(self.frames));
             }
@@ -106,26 +107,33 @@ impl Cutter {
         self.quiet_run = 0;
         self.voiced += 1;
 
-        let identical = fa == fb;
-        let turns = self.split_ok && !identical;
-        let frame_side = side_of(you_rms, them_rms);
-        match (turns, self.side, frame_side) {
-            (true, Some(s), f) if f != Side::Both && f != s => {
-                self.turn_run += 1;
-                if self.turn_run >= TURN_FRAMES {
-                    out.extend(self.take_stretch(self.frames - self.turn_run));
-                    self.side = Some(f);
-                    self.turn_run = 0;
-                    self.voiced = TURN_FRAMES;
-                    return;
-                }
-            }
-            (_, None, f) if f != Side::Both => self.side = Some(f),
-            _ => self.turn_run = 0,
+        let turns = self.split_ok && fa != fb;
+        let side = side_of(you_rms, them_rms);
+        if let Some(at) = self.turn_cut_at(side, turns) {
+            out.extend(self.take_stretch(at));
+            self.side = Some(side);
+            self.voiced = TURN_FRAMES;
+            return;
         }
         if self.frames >= FORCED_CUT_FRAMES {
             out.extend(self.take_stretch(self.frames));
         }
+    }
+
+    fn turn_cut_at(&mut self, frame_side: Side, turns: bool) -> Option<usize> {
+        match self.side {
+            None if frame_side != Side::Both => self.side = Some(frame_side),
+            Some(side) if turns && frame_side != Side::Both && frame_side != side => {
+                self.turn_run += 1;
+                if self.turn_run >= TURN_FRAMES {
+                    return Some(self.frames - self.turn_run);
+                }
+                return None;
+            }
+            _ => {}
+        }
+        self.turn_run = 0;
+        None
     }
 
     fn take_stretch(&mut self, upto_frames: usize) -> Option<Stretch> {
@@ -140,7 +148,7 @@ impl Cutter {
         self.quiet_run = 0;
         self.side = None;
         self.turn_run = 0;
-        if voiced == 0 || mine.is_empty() {
+        if voiced == 0 {
             return None;
         }
 
@@ -227,6 +235,44 @@ mod tests {
         let out = cut_all(&mine, &theirs, true);
         let voices: Vec<_> = out.iter().map(|s| s.voice).collect();
         assert_eq!(voices, ["them", "you"]);
+        for stretch in &out {
+            assert!((stretch.secs - 2.0).abs() < 0.1, "{}", stretch.secs);
+        }
+    }
+
+    #[test]
+    fn a_turn_split_by_a_short_pause_does_not_cut_inside_the_pause() {
+        let mine = cat(&[silence(1.0), speech(0.2), silence(0.3), speech(0.2)]);
+        let theirs = cat(&[speech(1.0), silence(0.7)]);
+        let out = cut_all(&mine, &theirs, true);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_speaker_change_shorter_than_300ms_does_not_cut() {
+        let mine = cat(&[silence(2.0), speech(0.2), silence(2.0)]);
+        let theirs = cat(&[speech(2.0), silence(0.2), speech(2.0)]);
+        let out = cut_all(&mine, &theirs, true);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].voice, "them");
+    }
+
+    #[test]
+    fn identical_channels_never_cut_on_turns() {
+        let both = cat(&[speech(2.0), speech(2.0)]);
+        let out = cut_all(&both, &both, true);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].voice, "both");
+    }
+
+    #[test]
+    fn the_speech_after_a_forced_cut_comes_back_as_the_next_stretch() {
+        let mut c = Cutter::new(RATE);
+        let first = c.push(&silence(20.0), &speech(20.0), true);
+        assert_eq!(first.len(), 1);
+        let rest = c.flush().expect("rest");
+        assert!((rest.secs - 5.0).abs() < 0.05, "{}", rest.secs);
+        assert!(rest.voiced_secs > 4.9);
     }
 
     #[test]
