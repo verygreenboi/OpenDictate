@@ -27,6 +27,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 const OUT_RATE: u32 = 16_000;
+const MEETING_MIC: &str = "";
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Meta {
@@ -196,7 +197,7 @@ fn should_start_lm_studio(s: &Settings, memory: u64, lms_found: bool) -> bool {
 
 impl Session {
     pub fn start(s: &Settings) -> Result<Self, String> {
-        let mic = MicStream::start("");
+        let mic = MicStream::start(MEETING_MIC);
         let cap = SystemCapture::start(None)?;
         let source = source_line(mic.is_ok());
         let started = now();
@@ -272,7 +273,7 @@ impl Drop for Session {
     }
 }
 
-fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<AtomicBool>, s: Settings) {
+fn run(cap: SystemCapture, mut mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<AtomicBool>, s: Settings) {
     let rate = cap.rate;
     let mut cutter = crate::cut::Cutter::new(rate);
     let mut index = 0usize;
@@ -312,6 +313,7 @@ fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex
     let mut aligner = Aligner::new(rate);
     let mut resampler = mic.as_ref().map(|m| Resampler::new(m.rate(), rate));
     let mut mic_failed = false;
+    let mut last_reopen = None;
     let mut levels = (0f32, 0f32);
     let mut last_levels = std::time::Instant::now();
     loop {
@@ -332,14 +334,27 @@ fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex
             l.peak = l.peak.max(peak(mine)).max(peak(&call.theirs));
         }
         levels = (levels.0.max(peak(mine)), levels.1.max(peak(&call.theirs)));
-        if let Some(e) = mic.as_ref().and_then(|m| m.failed()).filter(|_| !mic_failed) {
-            mic_failed = true;
-            log(&dir, &format!("mic stopped: {e}"));
-            if let Ok(mut l) = live.lock() {
-                l.warning = Some("Your microphone stopped".into());
+        process(step(&mut cutter, &mut aligner, &mut resampler, call, heard, crate::tap::host_now_ns(), mic.is_some()));
+        let failure = mic.as_ref().and_then(|m| m.failed()).filter(|_| !ending);
+        if should_reopen(failure.is_some(), last_reopen, std::time::Instant::now()) {
+            last_reopen = Some(std::time::Instant::now());
+            match MicStream::start(MEETING_MIC) {
+                Ok(m) => {
+                    log(&dir, &format!("mic reopened · {}", m.info()));
+                    resampler = Some(Resampler::new(m.rate(), rate));
+                    mic = Some(m);
+                    mic_failed = false;
+                }
+                Err(e) if !mic_failed => {
+                    mic_failed = true;
+                    log(&dir, &format!("mic stopped: {} · reopening failed: {e}", failure.unwrap_or_default()));
+                    if let Ok(mut l) = live.lock() {
+                        l.warning = Some("Your microphone stopped".into());
+                    }
+                }
+                Err(_) => {}
             }
         }
-        process(step(&mut cutter, &mut aligner, &mut resampler, call, heard, crate::tap::host_now_ns(), mic.is_some()));
         while let Some(side) = aligner.padded() {
             log(&dir, &format!("{side} sent nothing for {} ms, padding it with silence", crate::align::HOLD_MS));
         }
@@ -367,6 +382,12 @@ fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex
 
 fn source_line(mic_opened: bool) -> &'static str {
     if mic_opened { "You and everyone on the call" } else { "Everyone on the call" }
+}
+
+const REOPEN_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn should_reopen(failed: bool, last_try: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    failed && last_try.is_none_or(|t| now.duration_since(t) >= REOPEN_EVERY)
 }
 
 fn heard_you(mic: &[f32]) -> bool {
@@ -859,6 +880,17 @@ mod tests {
         let (voices, heard) = record(&call, Some((&mic, 48_000.0)), true);
         assert_eq!(voices, ["them"]);
         assert!(!heard);
+    }
+
+    #[test]
+    fn a_failed_mic_is_reopened_at_most_once_every_two_seconds() {
+        let now = std::time::Instant::now();
+        let ago = |ms| Some(now - std::time::Duration::from_millis(ms));
+        assert!(should_reopen(true, None, now));
+        assert!(!should_reopen(true, ago(1_999), now));
+        assert!(should_reopen(true, ago(2_000), now));
+        assert!(!should_reopen(false, None, now));
+        assert!(!should_reopen(false, ago(10_000), now));
     }
 
     #[test]
