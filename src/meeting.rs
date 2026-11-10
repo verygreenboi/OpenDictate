@@ -27,7 +27,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 const OUT_RATE: u32 = 16_000;
-const MEETING_MIC: &str = "";
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Meta {
@@ -197,7 +196,7 @@ fn should_start_lm_studio(s: &Settings, memory: u64, lms_found: bool) -> bool {
 
 impl Session {
     pub fn start(s: &Settings) -> Result<Self, String> {
-        let mic = MicStream::start(MEETING_MIC);
+        let mic = MicStream::start(&s.microphone);
         let cap = SystemCapture::start(None)?;
         let source = source_line(mic.is_ok());
         let started = now();
@@ -347,7 +346,7 @@ fn run(cap: SystemCapture, mut mic: Option<MicStream>, dir: PathBuf, live: Arc<M
         let failure = mic.as_ref().and_then(|m| m.failed()).filter(|_| !ending);
         if should_reopen(failure.is_some(), last_reopen, std::time::Instant::now()) {
             last_reopen = Some(std::time::Instant::now());
-            match MicStream::start(MEETING_MIC) {
+            match MicStream::start(&s.microphone) {
                 Ok(m) => {
                     log(&dir, &format!("mic reopened · {}", m.info()));
                     resampler = Some(Resampler::new(m.rate(), rate));
