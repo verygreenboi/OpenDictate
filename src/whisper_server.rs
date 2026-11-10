@@ -38,6 +38,7 @@ pub struct WhisperServer {
     child: Option<std::process::Child>,
     watchdog: Option<std::process::Child>,
     port: u16,
+    rejected: u8,
 }
 
 impl WhisperServer {
@@ -61,7 +62,7 @@ impl WhisperServer {
             .spawn()
             .map_err(|e| format!("could not run whisper-server: {e}"))?;
         let watchdog = spawn_watchdog(std::process::id(), child.id()).ok();
-        let mut server = WhisperServer { child: Some(child), port, watchdog };
+        let mut server = WhisperServer { child: Some(child), port, watchdog, rejected: 0 };
         server.wait_until_ready(stop, Duration::from_secs(30))?;
         Ok(server)
     }
@@ -127,10 +128,20 @@ pub fn transcribe_stretch(
     note: &dyn Fn(&str),
 ) -> Result<String, String> {
     if s.speech_engine == SpeechEngine::WhisperLocal {
-        if let Some(srv) = server.as_ref() {
+        if let Some(srv) = server.as_mut() {
             match srv.attempt(s, wav) {
-                Ok(text) => return Ok(text),
-                Err(f) if f.server_still_good => return Err(f.message),
+                Ok(text) => {
+                    srv.rejected = 0;
+                    return Ok(text);
+                }
+                Err(f) if f.server_still_good && srv.rejected + 1 < 3 => {
+                    srv.rejected += 1;
+                    return Err(f.message);
+                }
+                Err(f) if f.server_still_good => {
+                    note(&format!("rejected three stretches in a row ({}); using whisper-cli for the rest of the meeting", f.message));
+                    *server = None;
+                }
                 Err(f) => {
                     note(&format!("{}; using whisper-cli for the rest of the meeting", f.message));
                     *server = None;
@@ -181,7 +192,7 @@ mod tests {
     #[test]
     fn falls_back_to_whisper_cli_when_the_server_request_fails() {
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut server = Some(WhisperServer { child: None, port: closed, watchdog: None });
+        let mut server = Some(WhisperServer { child: None, port: closed, watchdog: None, rejected: 0 });
         let calls = std::cell::Cell::new(0);
         let cli = |_: &[u8]| {
             calls.set(calls.get() + 1);
@@ -240,12 +251,17 @@ mod tests {
     }
 
     fn fake_http(status: &str, body: &'static str) -> u16 {
+        fake_http_in_turn(&[(status, body)])
+    }
+
+    fn fake_http_in_turn(replies: &[(&str, &'static str)]) -> u16 {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let status = status.to_string();
+        let replies: Vec<(String, &'static str)> = replies.iter().map(|(s, b)| (s.to_string(), *b)).collect();
         std::thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
+            for (n, stream) in listener.incoming().flatten().enumerate() {
+                let (status, body) = &replies[n % replies.len()];
                 let mut stream = stream;
                 stream.set_read_timeout(Some(Duration::from_millis(300))).ok();
                 let mut buf = [0u8; 65536];
@@ -259,7 +275,7 @@ mod tests {
     #[test]
     fn does_not_accept_an_unrelated_server_that_answers_on_the_port() {
         let port = fake_http("200 OK", "<html>some other service</html>");
-        let mut server = WhisperServer { child: None, port, watchdog: None };
+        let mut server = WhisperServer { child: None, port, watchdog: None, rejected: 0 };
         let began = Instant::now();
         assert!(server.wait_until_ready(&AtomicBool::new(false), Duration::from_secs(1)).is_err());
         assert!(began.elapsed() >= Duration::from_secs(1));
@@ -268,23 +284,51 @@ mod tests {
     #[test]
     fn accepts_a_server_that_serves_whisper_servers_own_page() {
         let port = fake_http("200 OK", "<html><title>Whisper.cpp Server</title></html>");
-        let mut server = WhisperServer { child: None, port, watchdog: None };
+        let mut server = WhisperServer { child: None, port, watchdog: None, rejected: 0 };
         assert!(server.wait_until_ready(&AtomicBool::new(false), Duration::from_secs(5)).is_ok());
     }
 
     #[test]
     fn keeps_the_server_when_it_rejects_one_stretch() {
         let port = fake_http("400 Bad Request", r#"{"error":"Invalid request"}"#);
-        let mut server = Some(WhisperServer { child: None, port, watchdog: None });
+        let mut server = Some(WhisperServer { child: None, port, watchdog: None, rejected: 0 });
         let out = transcribe_stretch(&mut server, &Settings::default(), b"w", &|_| panic!("cli must not run"), &|_| {});
         assert!(out.unwrap_err().contains("Invalid request"));
         assert!(server.is_some());
     }
 
+    fn calls(server: &mut Option<WhisperServer>, n: usize, noted: &std::cell::RefCell<String>) -> Vec<Result<String, String>> {
+        (0..n)
+            .map(|_| transcribe_stretch(server, &Settings::default(), b"w", &|_| Ok("cli".into()), &|m| noted.borrow_mut().push_str(m)))
+            .collect()
+    }
+
+    #[test]
+    fn falls_back_to_the_cli_after_the_server_rejects_three_stretches_in_a_row() {
+        let port = fake_http("400 Bad Request", "not json");
+        let mut server = Some(WhisperServer { child: None, port, watchdog: None, rejected: 0 });
+        let noted = std::cell::RefCell::new(String::new());
+        let out = calls(&mut server, 3, &noted);
+        assert!(out[0].is_err() && out[1].is_err());
+        assert_eq!(out[2], Ok("cli".to_string()));
+        assert!(server.is_none());
+        assert!(noted.borrow().contains("rejected"), "{}", noted.borrow());
+    }
+
+    #[test]
+    fn a_success_between_rejections_resets_the_count() {
+        let ok = r#"{"text":"hi"}"#;
+        let port = fake_http_in_turn(&[("400 Bad Request", "no"), ("400 Bad Request", "no"), ("200 OK", ok)]);
+        let mut server = Some(WhisperServer { child: None, port, watchdog: None, rejected: 0 });
+        let out = calls(&mut server, 8, &std::cell::RefCell::new(String::new()));
+        assert!(server.is_some());
+        assert_eq!(out.iter().filter(|r| r.as_deref() == Ok("hi")).count(), 2);
+    }
+
     #[test]
     fn drops_the_server_and_says_why_when_it_answers_with_a_server_error() {
         let port = fake_http("500 Internal Server Error", r#"{"error":"boom"}"#);
-        let mut server = Some(WhisperServer { child: None, port, watchdog: None });
+        let mut server = Some(WhisperServer { child: None, port, watchdog: None, rejected: 0 });
         let noted = std::cell::RefCell::new(String::new());
         let out = transcribe_stretch(&mut server, &Settings::default(), b"w", &|_| Ok("cli".into()), &|m| noted.borrow_mut().push_str(m));
         assert_eq!(out, Ok("cli".to_string()));
