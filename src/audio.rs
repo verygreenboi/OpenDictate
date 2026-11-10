@@ -110,6 +110,18 @@ pub(crate) fn input_stream(
     Ok((stream, rate, channels))
 }
 
+fn push(frames: &[f32], gain: f32, channels: usize, out: &Mutex<Vec<f32>>, level: &Mutex<f32>) {
+    let mut peak = 0.0f32;
+    let mut buf = out.lock().unwrap();
+    for v in crate::mic::pick_channels(frames, channels) {
+        let v = (v * gain).clamp(-1.0, 1.0);
+        peak = peak.max(v.abs());
+        buf.push(v);
+    }
+    let mut l = level.lock().unwrap();
+    *l = (*l * 0.6).max(peak);
+}
+
 impl Recording {
     /// `mic` is a microphone name ("" = system default); `gain` boosts quiet microphones.
     pub fn start(mic: &str, gain: f32) -> Result<Self, String> {
@@ -122,18 +134,6 @@ impl Recording {
 
         let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(supported.sample_rate() as usize * 30)));
         let level = Arc::new(Mutex::new(0.0f32));
-
-        fn push(frames: &[f32], gain: f32, channels: usize, out: &Mutex<Vec<f32>>, level: &Mutex<f32>) {
-            let mut peak = 0.0f32;
-            let mut buf = out.lock().unwrap();
-            for frame in frames.chunks_exact(channels) {
-                let v = (frame.iter().sum::<f32>() / channels as f32 * gain).clamp(-1.0, 1.0);
-                peak = peak.max(v.abs());
-                buf.push(v);
-            }
-            let mut l = level.lock().unwrap();
-            *l = (*l * 0.6).max(peak);
-        }
 
         let error = Arc::new(Mutex::new(None::<String>));
         let er = error.clone();
@@ -251,7 +251,8 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
 
 #[cfg(test)]
 mod tests {
-    use super::stops_the_stream;
+    use super::{push, stops_the_stream};
+    use std::sync::Mutex;
     use cpal::ErrorKind;
 
     #[test]
@@ -266,5 +267,18 @@ mod tests {
         for kind in [ErrorKind::DeviceNotAvailable, ErrorKind::StreamInvalidated, ErrorKind::BackendError] {
             assert!(stops_the_stream(kind), "{kind:?}");
         }
+    }
+
+    #[test]
+    fn dictation_on_a_16_channel_interface_keeps_the_mic_at_full_level() {
+        let mut data = vec![0.0f32; 16 * 4];
+        for frame in data.chunks_exact_mut(16) {
+            frame[0] = 0.3;
+        }
+        let (out, level) = (Mutex::new(Vec::new()), Mutex::new(0.0f32));
+        push(&data, 2.0, 16, &out, &level);
+        let peak = out.lock().unwrap().iter().fold(0.0f32, |p, v| p.max(v.abs()));
+        assert!((peak - 0.6).abs() < 1e-6, "{peak}");
+        assert!((*level.lock().unwrap() - 0.6).abs() < 1e-6);
     }
 }
