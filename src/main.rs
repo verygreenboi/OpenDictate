@@ -1,3 +1,4 @@
+mod align;
 mod app;
 mod audio;
 mod cut;
@@ -5,6 +6,7 @@ mod engines;
 mod icon;
 mod lms;
 mod meeting;
+mod mic;
 #[cfg(target_os = "macos")]
 mod macos_look;
 mod search;

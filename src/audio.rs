@@ -34,51 +34,102 @@ pub fn default_input_name() -> Option<String> {
     cpal::default_host().default_input_device().and_then(|d| device_name(&d))
 }
 
+pub(crate) fn find_input(mic: &str) -> Result<cpal::Device, String> {
+    let host = cpal::default_host();
+    let chosen = if mic.trim().is_empty() {
+        None
+    } else {
+        host.input_devices()
+            .ok()
+            .and_then(|mut it| it.find(|d| device_name(d).as_deref() == Some(mic)))
+    };
+    chosen
+        .or_else(|| host.default_input_device())
+        .ok_or_else(|| "No microphone found. Check System Settings › Sound › Input.".to_string())
+}
+
+pub(crate) fn input_channels(device: &cpal::Device) -> Result<usize, String> {
+    device
+        .default_input_config()
+        .map(|c| c.channels().max(1) as usize)
+        .map_err(|e| format!("Microphone unavailable: {e}"))
+}
+
+pub(crate) fn device_label(device: &cpal::Device) -> String {
+    device_name(device).unwrap_or_else(|| "unknown".into())
+}
+
+pub(crate) fn input_stream(
+    device: &cpal::Device,
+    on_data: impl FnMut(&[f32], u64) + Send + 'static,
+    mut on_error: impl FnMut(String) + Send + 'static,
+) -> Result<(cpal::Stream, u32, usize), String> {
+    let supported = device
+        .default_input_config()
+        .map_err(|e| format!("Microphone unavailable: {e}"))?;
+    let format = supported.sample_format();
+    let config = supported.config();
+    let channels = config.channels.max(1) as usize;
+    let rate = config.sample_rate;
+    let err = move |e: cpal::Error| {
+        eprintln!("audio stream error: {e}");
+        if stops_the_stream(e.kind()) {
+            on_error(e.to_string());
+        }
+    };
+    fn build<T: cpal::SizedSample + 'static>(
+        device: &cpal::Device,
+        config: cpal::StreamConfig,
+        convert: fn(T) -> f32,
+        mut on_data: impl FnMut(&[f32], u64) + Send + 'static,
+        err: impl FnMut(cpal::Error) + Send + 'static,
+    ) -> Result<cpal::Stream, cpal::Error> {
+        let mut buf = Vec::<f32>::new();
+        device.build_input_stream::<T, _, _>(
+            config,
+            move |data, info| {
+                buf.clear();
+                buf.extend(data.iter().map(|&v| convert(v)));
+                on_data(&buf, info.timestamp().capture.as_nanos() as u64);
+            },
+            err,
+            None,
+        )
+    }
+    let stream = match format {
+        cpal::SampleFormat::F32 => build::<f32>(device, config, |v| v, on_data, err),
+        cpal::SampleFormat::I16 => build::<i16>(device, config, |v| v as f32 / 32768.0, on_data, err),
+        cpal::SampleFormat::U16 => {
+            build::<u16>(device, config, |v| (v as f32 - 32768.0) / 32768.0, on_data, err)
+        }
+        cpal::SampleFormat::I32 => build::<i32>(device, config, |v| v as f32 / 2147483648.0, on_data, err),
+        other => return Err(format!("Unsupported microphone format {other:?}")),
+    }
+    .map_err(|e| format!("Could not open the microphone: {e}"))?;
+    stream.play().map_err(|e| format!("Could not start the microphone: {e}"))?;
+    Ok((stream, rate, channels))
+}
+
 impl Recording {
     /// `mic` is a microphone name ("" = system default); `gain` boosts quiet microphones.
     pub fn start(mic: &str, gain: f32) -> Result<Self, String> {
-        let host = cpal::default_host();
-        let chosen = if mic.trim().is_empty() {
-            None
-        } else {
-            host.input_devices()
-                .ok()
-                .and_then(|mut it| it.find(|d| device_name(d).as_deref() == Some(mic)))
-        };
-        let device = chosen
-            .or_else(|| host.default_input_device())
-            .ok_or("No microphone found. Check System Settings › Sound › Input.")?;
+        let device = find_input(mic)?;
         let gain = gain.clamp(0.1, 8.0);
         let supported = device
             .default_input_config()
             .map_err(|e| format!("Microphone unavailable: {e}"))?;
-        let format = supported.sample_format();
-        let config = supported.config();
-        let channels = config.channels.max(1) as usize;
-        let rate = config.sample_rate;
-        let info = format!(
-            "{} · {format:?} · {rate} Hz · {channels} ch",
-            device_name(&device).unwrap_or_else(|| "unknown".into())
-        );
+        let (format, expected) = (supported.sample_format(), supported.channels().max(1) as usize);
 
-        let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(rate as usize * 30)));
+        let samples = Arc::new(Mutex::new(Vec::<f32>::with_capacity(supported.sample_rate() as usize * 30)));
         let level = Arc::new(Mutex::new(0.0f32));
 
-        fn push(frames: impl Iterator<Item = f32>, gain: f32, channels: usize, out: &Mutex<Vec<f32>>, level: &Mutex<f32>) {
-            let mut acc = 0.0;
-            let mut n = 0;
+        fn push(frames: &[f32], gain: f32, channels: usize, out: &Mutex<Vec<f32>>, level: &Mutex<f32>) {
             let mut peak = 0.0f32;
             let mut buf = out.lock().unwrap();
-            for s in frames {
-                acc += s;
-                n += 1;
-                if n == channels {
-                    let v = (acc / channels as f32 * gain).clamp(-1.0, 1.0);
-                    peak = peak.max(v.abs());
-                    buf.push(v);
-                    acc = 0.0;
-                    n = 0;
-                }
+            for frame in frames.chunks_exact(channels) {
+                let v = (frame.iter().sum::<f32>() / channels as f32 * gain).clamp(-1.0, 1.0);
+                peak = peak.max(v.abs());
+                buf.push(v);
             }
             let mut l = level.lock().unwrap();
             *l = (*l * 0.6).max(peak);
@@ -86,44 +137,16 @@ impl Recording {
 
         let error = Arc::new(Mutex::new(None::<String>));
         let er = error.clone();
-        let err = move |e: cpal::Error| {
-            eprintln!("audio stream error: {e}");
-            *er.lock().unwrap() = Some(e.to_string());
-        };
         let (s, l) = (samples.clone(), level.clone());
-        let stream = match format {
-            cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
-                config,
-                move |data, _| push(data.iter().copied(), gain, channels, &s, &l),
-                err,
-                None,
-            ),
-            cpal::SampleFormat::I16 => device.build_input_stream::<i16, _, _>(
-                config,
-                move |data, _| push(data.iter().map(|&v| v as f32 / 32768.0), gain, channels, &s, &l),
-                err,
-                None,
-            ),
-            cpal::SampleFormat::U16 => device.build_input_stream::<u16, _, _>(
-                config,
-                move |data, _| {
-                    push(data.iter().map(|&v| (v as f32 - 32768.0) / 32768.0), gain, channels, &s, &l)
-                },
-                err,
-                None,
-            ),
-            cpal::SampleFormat::I32 => device.build_input_stream::<i32, _, _>(
-                config,
-                move |data, _| {
-                    push(data.iter().map(|&v| v as f32 / 2147483648.0), gain, channels, &s, &l)
-                },
-                err,
-                None,
-            ),
-            other => return Err(format!("Unsupported microphone format {other:?}")),
+        let (stream, rate, channels) = input_stream(
+            &device,
+            move |data, _| push(data, gain, expected, &s, &l),
+            move |e| *er.lock().unwrap() = Some(e),
+        )?;
+        if channels != expected {
+            return Err("The microphone changed format while opening. Try again.".into());
         }
-        .map_err(|e| format!("Could not open the microphone: {e}"))?;
-        stream.play().map_err(|e| format!("Could not start the microphone: {e}"))?;
+        let info = format!("{} · {format:?} · {rate} Hz · {channels} ch", device_label(&device));
 
         Ok(Self { stream, samples, level, rate, started: std::time::Instant::now(), info, error })
     }
@@ -204,6 +227,10 @@ impl Clip {
     }
 }
 
+fn stops_the_stream(kind: cpal::ErrorKind) -> bool {
+    !matches!(kind, cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied)
+}
+
 fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
     if from == to || input.is_empty() {
         return input.to_vec();
@@ -220,4 +247,24 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
             slice.iter().sum::<f32>() / slice.len() as f32
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stops_the_stream;
+    use cpal::ErrorKind;
+
+    #[test]
+    fn overloads_and_reroutes_do_not_count_as_the_microphone_stopping() {
+        for kind in [ErrorKind::Xrun, ErrorKind::DeviceChanged, ErrorKind::RealtimeDenied] {
+            assert!(!stops_the_stream(kind), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_disconnect_or_a_sample_rate_change_counts_as_the_microphone_stopping() {
+        for kind in [ErrorKind::DeviceNotAvailable, ErrorKind::StreamInvalidated, ErrorKind::BackendError] {
+            assert!(stops_the_stream(kind), "{kind:?}");
+        }
+    }
 }

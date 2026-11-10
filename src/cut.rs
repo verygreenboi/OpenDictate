@@ -232,7 +232,7 @@ pub fn worth_transcribing(peak: f32, rms: f32, voiced_secs: f32) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const RATE: f64 = 48_000.0;
@@ -416,7 +416,7 @@ mod tests {
         assert!(!worth_transcribing(0.02, 0.01, 2.0));
     }
 
-    fn fixture(name: &str, peak: f32) -> Vec<f32> {
+    pub(crate) fn fixture(name: &str, peak: f32) -> Vec<f32> {
         let bytes = std::fs::read(format!("{}/tests/fixtures/{name}.wav", env!("CARGO_MANIFEST_DIR"))).unwrap();
         let at = bytes.windows(4).position(|w| w == b"data").unwrap() + 8;
         let raw: Vec<f32> = bytes[at..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32).collect();
