@@ -160,16 +160,21 @@ pub(crate) fn multipart(fields: &[(&str, &str)], wav: &[u8]) -> (String, Vec<u8>
     (format!("multipart/form-data; boundary={boundary}"), body)
 }
 
-fn transcribe_remote(s: &Settings, wav: &[u8]) -> Result<String, String> {
+fn remote_fields<'a>(s: &'a Settings, prompt: &'a str) -> Vec<(&'static str, &'a str)> {
     let lang = s.language.trim();
-    let prompt = dictionary_prompt(s);
     let mut fields = vec![("model", s.speech_model.trim()), ("response_format", "json")];
     if !lang.is_empty() && lang != "auto" {
         fields.push(("language", lang));
     }
     if !prompt.is_empty() {
-        fields.push(("prompt", &prompt));
+        fields.push(("prompt", prompt));
     }
+    fields
+}
+
+fn transcribe_remote(s: &Settings, wav: &[u8]) -> Result<String, String> {
+    let prompt = dictionary_prompt(s);
+    let fields = remote_fields(s, &prompt);
     let (content_type, body) = multipart(&fields, wav);
 
     let mut req = agent(180)
@@ -553,5 +558,20 @@ mod tests {
         assert!(field < value && value < wav);
         assert!(text.contains("name=\"file\""));
         assert!(text.ends_with(&format!("\r\n--{boundary}--\r\n")));
+    }
+
+    #[test]
+    fn remote_transcription_sends_model_format_language_prompt_then_the_file() {
+        let mut s = Settings::default();
+        s.speech_model = "whisper-1".into();
+        s.language = "fr".into();
+        let fields = remote_fields(&s, "Vocabulary: Zed.");
+        let (_, body) = multipart(&fields, b"RIFF");
+        let text = String::from_utf8_lossy(&body).into_owned();
+        let at: Vec<usize> = ["model", "response_format", "language", "prompt", "file"]
+            .iter()
+            .map(|n| text.find(&format!("name=\"{n}\"")).unwrap())
+            .collect();
+        assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?}");
     }
 }

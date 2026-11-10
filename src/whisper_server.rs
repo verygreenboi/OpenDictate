@@ -19,8 +19,24 @@ fn inference_fields<'a>(language: &'a str, prompt: &'a str) -> Vec<(&'static str
     fields
 }
 
+fn spawn_watchdog(app: u32, server: u32) -> std::io::Result<std::process::Child> {
+    let script = r#"while kill -0 "$1" 2>/dev/null && kill -0 "$2" 2>/dev/null; do sleep 1; done; kill "$2" 2>/dev/null"#;
+    std::process::Command::new("sh")
+        .args(["-c", script, "sh", &app.to_string(), &server.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+}
+
+struct Failure {
+    message: String,
+    server_still_good: bool,
+}
+
 pub struct WhisperServer {
     child: Option<std::process::Child>,
+    watchdog: Option<std::process::Child>,
     port: u16,
 }
 
@@ -44,14 +60,15 @@ impl WhisperServer {
             .stderr(stderr)
             .spawn()
             .map_err(|e| format!("could not run whisper-server: {e}"))?;
-        let mut server = WhisperServer { child: Some(child), port };
-        server.wait_until_ready(stop)?;
+        let watchdog = spawn_watchdog(std::process::id(), child.id()).ok();
+        let mut server = WhisperServer { child: Some(child), port, watchdog };
+        server.wait_until_ready(stop, Duration::from_secs(30))?;
         Ok(server)
     }
 
-    fn wait_until_ready(&mut self, stop: &AtomicBool) -> Result<(), String> {
+    fn wait_until_ready(&mut self, stop: &AtomicBool, patience: Duration) -> Result<(), String> {
         let probe = crate::engines::agent(2);
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + patience;
         while Instant::now() < deadline {
             if stop.load(Ordering::Relaxed) {
                 return Err("stopped while whisper-server was loading".into());
@@ -59,31 +76,43 @@ impl WhisperServer {
             if let Some(status) = self.child.as_mut().and_then(|c| c.try_wait().ok().flatten()) {
                 return Err(format!("whisper-server exited: {status}"));
             }
-            if probe.get(format!("http://127.0.0.1:{}/", self.port)).call().is_ok_and(|r| r.status() == 200) {
-                return Ok(());
+            if let Ok(mut r) = probe.get(format!("http://127.0.0.1:{}/", self.port)).call() {
+                let ours = r.status() == 200
+                    && r.body_mut().read_to_string().is_ok_and(|b| b.contains("Whisper.cpp Server"))
+                    && self.child.as_mut().is_none_or(|c| c.try_wait().is_ok_and(|s| s.is_none()));
+                if ours {
+                    return Ok(());
+                }
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        Err("whisper-server did not become ready in 30 s".into())
+        Err("whisper-server did not become ready in time".into())
     }
 
+    #[cfg(test)]
     pub fn transcribe(&self, s: &Settings, wav: &[u8]) -> Result<String, String> {
+        self.attempt(s, wav).map_err(|f| f.message)
+    }
+
+    fn attempt(&self, s: &Settings, wav: &[u8]) -> Result<String, Failure> {
         let prompt = crate::engines::dictionary_prompt(s);
         let fields = inference_fields(s.language.trim(), &prompt);
         let (content_type, body) = crate::engines::multipart(&fields, wav);
+        let down = |message: String| Failure { message, server_still_good: false };
         let resp = crate::engines::agent(180)
             .post(format!("http://127.0.0.1:{}/inference", self.port))
             .header("Content-Type", content_type)
             .send(&body[..])
-            .map_err(|e| format!("whisper-server unreachable: {e}"))?;
-        let v = crate::engines::read_json(resp)?;
+            .map_err(|e| down(format!("whisper-server unreachable: {e}")))?;
+        let rejected = resp.status().is_client_error();
+        let v = crate::engines::read_json(resp).map_err(|m| Failure { message: m, server_still_good: rejected })?;
         Ok(crate::engines::clean_transcript(v["text"].as_str().unwrap_or_default()))
     }
 }
 
 impl Drop for WhisperServer {
     fn drop(&mut self) {
-        if let Some(mut c) = self.child.take() {
+        for mut c in [self.child.take(), self.watchdog.take()].into_iter().flatten() {
             let _ = c.kill();
             let _ = c.wait();
         }
@@ -95,12 +124,17 @@ pub fn transcribe_stretch(
     s: &Settings,
     wav: &[u8],
     fallback: &dyn Fn(&[u8]) -> Result<String, String>,
+    note: &dyn Fn(&str),
 ) -> Result<String, String> {
     if s.speech_engine == SpeechEngine::WhisperLocal {
         if let Some(srv) = server.as_ref() {
-            match srv.transcribe(s, wav) {
+            match srv.attempt(s, wav) {
                 Ok(text) => return Ok(text),
-                Err(_) => *server = None,
+                Err(f) if f.server_still_good => return Err(f.message),
+                Err(f) => {
+                    note(&format!("{}; using whisper-cli for the rest of the meeting", f.message));
+                    *server = None;
+                }
             }
         }
     }
@@ -136,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn returns_none_when_no_server_binary_exists() {
+    fn picks_no_sibling_when_none_sits_beside_the_cli() {
         let dir = temp_dir("none");
         let cli = executable(&dir, "whisper-cli");
         let found = find_server_bin(cli.to_str().unwrap());
@@ -147,13 +181,13 @@ mod tests {
     #[test]
     fn falls_back_to_whisper_cli_when_the_server_request_fails() {
         let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut server = Some(WhisperServer { child: None, port: closed });
+        let mut server = Some(WhisperServer { child: None, port: closed, watchdog: None });
         let calls = std::cell::Cell::new(0);
         let cli = |_: &[u8]| {
             calls.set(calls.get() + 1);
             Ok("from the cli".to_string())
         };
-        let out = transcribe_stretch(&mut server, &Settings::default(), b"wav", &cli);
+        let out = transcribe_stretch(&mut server, &Settings::default(), b"wav", &cli, &|_| {});
         assert_eq!(out, Ok("from the cli".to_string()));
         assert_eq!(calls.get(), 1);
         assert!(server.is_none());
@@ -163,7 +197,7 @@ mod tests {
     fn uses_the_cli_when_there_is_no_server() {
         let mut server = None;
         let cli = |_: &[u8]| Ok("cli".to_string());
-        assert_eq!(transcribe_stretch(&mut server, &Settings::default(), b"w", &cli), Ok("cli".to_string()));
+        assert_eq!(transcribe_stretch(&mut server, &Settings::default(), b"w", &cli, &|_| {}), Ok("cli".to_string()));
     }
 
     #[test]
@@ -203,6 +237,98 @@ mod tests {
         assert!(result.is_err());
         assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn fake_http(status: &str, body: &'static str) -> u16 {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let status = status.to_string();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                stream.set_read_timeout(Some(Duration::from_millis(300))).ok();
+                let mut buf = [0u8; 65536];
+                while stream.read(&mut buf).is_ok_and(|n| n == buf.len()) {}
+                let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn does_not_accept_an_unrelated_server_that_answers_on_the_port() {
+        let port = fake_http("200 OK", "<html>some other service</html>");
+        let mut server = WhisperServer { child: None, port, watchdog: None };
+        let began = Instant::now();
+        assert!(server.wait_until_ready(&AtomicBool::new(false), Duration::from_secs(1)).is_err());
+        assert!(began.elapsed() >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn accepts_a_server_that_serves_whisper_servers_own_page() {
+        let port = fake_http("200 OK", "<html><title>Whisper.cpp Server</title></html>");
+        let mut server = WhisperServer { child: None, port, watchdog: None };
+        assert!(server.wait_until_ready(&AtomicBool::new(false), Duration::from_secs(5)).is_ok());
+    }
+
+    #[test]
+    fn keeps_the_server_when_it_rejects_one_stretch() {
+        let port = fake_http("400 Bad Request", r#"{"error":"Invalid request"}"#);
+        let mut server = Some(WhisperServer { child: None, port, watchdog: None });
+        let out = transcribe_stretch(&mut server, &Settings::default(), b"w", &|_| panic!("cli must not run"), &|_| {});
+        assert!(out.unwrap_err().contains("Invalid request"));
+        assert!(server.is_some());
+    }
+
+    #[test]
+    fn drops_the_server_and_says_why_when_it_answers_with_a_server_error() {
+        let port = fake_http("500 Internal Server Error", r#"{"error":"boom"}"#);
+        let mut server = Some(WhisperServer { child: None, port, watchdog: None });
+        let noted = std::cell::RefCell::new(String::new());
+        let out = transcribe_stretch(&mut server, &Settings::default(), b"w", &|_| Ok("cli".into()), &|m| noted.borrow_mut().push_str(m));
+        assert_eq!(out, Ok("cli".to_string()));
+        assert!(server.is_none());
+        assert!(noted.borrow().contains("boom"), "{}", noted.borrow());
+    }
+
+    fn sleeper() -> std::process::Child {
+        std::process::Command::new("sleep").arg("30").spawn().unwrap()
+    }
+
+    fn gone_within(c: &mut std::process::Child, secs: u64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(secs);
+        while Instant::now() < deadline {
+            if c.try_wait().unwrap().is_some() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[test]
+    fn the_server_is_killed_when_the_app_that_started_it_dies() {
+        let (mut app, mut server) = (sleeper(), sleeper());
+        let mut dog = spawn_watchdog(app.id(), server.id()).unwrap();
+        app.kill().unwrap();
+        app.wait().unwrap();
+        let killed = gone_within(&mut server, 3);
+        let _ = server.kill();
+        let _ = dog.kill();
+        assert!(killed);
+    }
+
+    #[test]
+    fn the_watchdog_exits_when_the_server_stops_normally() {
+        let (mut app, mut server) = (sleeper(), sleeper());
+        let mut dog = spawn_watchdog(app.id(), server.id()).unwrap();
+        server.kill().unwrap();
+        server.wait().unwrap();
+        let exited = gone_within(&mut dog, 3);
+        let _ = app.kill();
+        let _ = dog.kill();
+        assert!(exited);
     }
 
     fn real_settings() -> Settings {

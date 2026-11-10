@@ -255,11 +255,13 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
     let server = std::cell::RefCell::new(start_server(&s, &dir, &stop));
     let transcribe = |wav: &[u8]| {
         let mut server = server.borrow_mut();
-        let had_server = server.is_some();
-        let text = crate::whisper_server::transcribe_stretch(&mut server, &s, wav, &|w| crate::engines::transcribe(&s, w));
-        if had_server && server.is_none() {
-            log(&dir, "    whisper-server failed; using whisper-cli for the rest of the meeting");
-        }
+        let text = crate::whisper_server::transcribe_stretch(
+            &mut server,
+            &s,
+            wav,
+            &|w| crate::engines::transcribe(&s, w),
+            &|why| log(&dir, &format!("    whisper-server: {why}")),
+        );
         text
     };
 
