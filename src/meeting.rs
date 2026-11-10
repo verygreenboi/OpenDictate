@@ -349,7 +349,7 @@ fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex
             last_levels = std::time::Instant::now();
         }
         if ending {
-            process(cutter.flush().into_iter().collect());
+            process(last_stretches(&mut cutter, &mut aligner, mic.is_some()));
             if let Ok(mut l) = live.lock() {
                 if no_audio_reached(l.samples) {
                     l.warning = Some("No audio reached the recorder.".into());
@@ -394,6 +394,13 @@ fn step(
     aligner.push_mic(&samples, first_host_ns);
     let (mine, theirs) = aligner.take(now_ns);
     cutter.push(&mine, &theirs, split_ok)
+}
+
+fn last_stretches(cutter: &mut crate::cut::Cutter, aligner: &mut Aligner, split_ok: bool) -> Vec<crate::cut::Stretch> {
+    let (mine, theirs) = aligner.finish();
+    let mut out = cutter.push(&mine, &theirs, split_ok);
+    out.extend(cutter.flush());
+    out
 }
 
 fn start_server(s: &Settings, dir: &Path, stop: &AtomicBool) -> Option<crate::whisper_server::WhisperServer> {
@@ -789,12 +796,17 @@ mod tests {
     }
 
     fn record(call: &[f32], mic: Option<(&[f32], f64)>, split_ok: bool) -> (Vec<&'static str>, bool) {
+        let (stretches, heard) = record_stretches(call, mic, split_ok, 4);
+        (stretches.iter().map(|s| s.voice).collect(), heard)
+    }
+
+    fn record_stretches(call: &[f32], mic: Option<(&[f32], f64)>, split_ok: bool, ticks_after_call: usize) -> (Vec<Stretch>, bool) {
         let mut cutter = crate::cut::Cutter::new(RATE);
         let mut aligner = crate::align::Aligner::new(RATE);
         let mut resampler = mic.map(|(_, r)| crate::align::Resampler::new(r, RATE));
         let mut out = Vec::new();
         let mut heard = false;
-        let ticks = (call.len() as f64 / RATE / 0.25).ceil() as usize + 4;
+        let ticks = (call.len() as f64 / RATE / 0.25).ceil() as usize + ticks_after_call;
         for k in 0..ticks {
             let (theirs, first_host_ns) = chunk(call, k, (RATE / 4.0) as usize);
             let got = mic.map(|(m, r)| chunk(m, k, (r / 4.0) as usize));
@@ -802,8 +814,18 @@ mod tests {
             let call = crate::tap::Chunk { mine: Vec::new(), theirs, first_host_ns };
             out.extend(step(&mut cutter, &mut aligner, &mut resampler, call, got, T0 + (k as u64 + 1) * TICK_NS, split_ok));
         }
-        out.extend(cutter.flush());
-        (out.iter().map(|s| s.voice).collect(), heard)
+        out.extend(last_stretches(&mut cutter, &mut aligner, split_ok));
+        (out, heard)
+    }
+
+    #[test]
+    fn the_calls_last_words_reach_the_cutter_when_the_mic_stalls_just_before_stop() {
+        let call = [silence(1.0, RATE), at_rate(&crate::cut::tests::fixture("question", 0.3), RATE)].concat();
+        let call = &call[..call.len() / 12_000 * 12_000];
+        let mic = silence(call.len() as f64 / RATE - 0.3, 48_000.0);
+        let (stretches, _) = record_stretches(call, Some((&mic, 48_000.0)), true, 0);
+        let end = stretches.iter().map(|s| s.start_secs + s.secs as f64).fold(0.0, f64::max);
+        assert!(end >= call.len() as f64 / RATE - 0.05, "stretches end at {end:.2}s, call ends at {:.2}s", call.len() as f64 / RATE);
     }
 
     #[test]
@@ -828,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_mic_marks_the_meeting_as_not_captured() {
+    fn a_silent_mic_is_not_heard_and_the_call_reads_as_them() {
         let call = [at_rate(&crate::cut::tests::fixture("question", 0.3), RATE), silence(2.0, RATE)].concat();
         let mic = silence(call.len() as f64 / RATE, 48_000.0);
         let (voices, heard) = record(&call, Some((&mic, 48_000.0)), true);

@@ -228,6 +228,14 @@ impl Aligner {
         (self.mic.buf.drain(..n).collect(), self.call.buf.drain(..n).collect())
     }
 
+    pub fn finish(&mut self) -> (Vec<f32>, Vec<f32>) {
+        let n = self.mic.buf.len().max(self.call.buf.len());
+        self.mic.buf.resize(n, 0.0);
+        self.call.buf.resize(n, 0.0);
+        self.emitted += n as u64;
+        (std::mem::take(&mut self.mic.buf), std::mem::take(&mut self.call.buf))
+    }
+
     fn correct_drift(&mut self) {
         let ms_to_samples = self.rate / 1000.0;
         let offset = self.offset_samples();
@@ -576,6 +584,19 @@ mod aligner_tests {
         assert_eq!(live_got, live_sent);
         assert!(dead_got_after_stop.iter().all(|s| *s == 0.0));
         assert_eq!(padded, vec![if mic_dies { "mic" } else { "call" }]);
+    }
+
+    #[test]
+    fn finish_returns_everything_held_with_the_shorter_side_padded_by_silence() {
+        let mut al = Aligner::new(RATE);
+        al.push_mic(&ramp(0, 100), None);
+        al.push_call(&ramp(0, 300), None);
+        let (mine, theirs) = al.take(0);
+        assert_eq!((mine.len(), theirs.len()), (100, 100));
+        let (mine, theirs) = al.finish();
+        assert_eq!(mine, vec![0.0; 200]);
+        assert_eq!(theirs, ramp(100, 200));
+        assert_eq!(al.finish(), (Vec::new(), Vec::new()));
     }
 
     #[test]

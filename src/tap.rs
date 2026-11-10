@@ -146,9 +146,7 @@ unsafe extern "C-unwind" fn io_proc(
         return 0;
     }
 
-    // Only split when the device is handing over exactly what it was opened
-    // with. Anything else and we do not know whose channel is whose, so
-    // everything goes down one side and the chunk is marked as mixed.
+    // Any other layout and we do not know whose channel is whose.
     let split = sink.mic_channels > 0 && channels == sink.mic_channels + sink.tap_channels;
 
     let mut mic: Vec<Vec<f32>> = Vec::new();
@@ -442,7 +440,6 @@ impl SystemCapture {
             sink.probe.lock().map(|p| p.clone()).unwrap_or_default()
         }
     }
-
 
     pub fn mic_channels(&self) -> usize {
         unsafe {
