@@ -73,7 +73,9 @@ pub(crate) fn input_stream(
     let rate = config.sample_rate;
     let err = move |e: cpal::Error| {
         eprintln!("audio stream error: {e}");
-        on_error(e.to_string());
+        if stops_the_stream(e.kind()) {
+            on_error(e.to_string());
+        }
     };
     fn build<T: cpal::SizedSample + 'static>(
         device: &cpal::Device,
@@ -225,6 +227,10 @@ impl Clip {
     }
 }
 
+fn stops_the_stream(kind: cpal::ErrorKind) -> bool {
+    !matches!(kind, cpal::ErrorKind::Xrun | cpal::ErrorKind::DeviceChanged | cpal::ErrorKind::RealtimeDenied)
+}
+
 fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
     if from == to || input.is_empty() {
         return input.to_vec();
@@ -241,4 +247,24 @@ fn resample(input: &[f32], from: u32, to: u32) -> Vec<f32> {
             slice.iter().sum::<f32>() / slice.len() as f32
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stops_the_stream;
+    use cpal::ErrorKind;
+
+    #[test]
+    fn overloads_and_reroutes_do_not_count_as_the_microphone_stopping() {
+        for kind in [ErrorKind::Xrun, ErrorKind::DeviceChanged, ErrorKind::RealtimeDenied] {
+            assert!(!stops_the_stream(kind), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_disconnect_or_a_sample_rate_change_counts_as_the_microphone_stopping() {
+        for kind in [ErrorKind::DeviceNotAvailable, ErrorKind::StreamInvalidated, ErrorKind::BackendError] {
+            assert!(stops_the_stream(kind), "{kind:?}");
+        }
+    }
 }
