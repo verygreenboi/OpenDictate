@@ -150,16 +150,17 @@ unsafe extern "C-unwind" fn io_proc(
         for c in 0..ch {
             let global = index + c;
             let into_mine = split && global < sink.mic_channels;
+            let keep = into_mine && global < 2;
             if !into_mine {
                 n_theirs += 1;
             }
-            let mut channel = vec![0f32; if into_mine { frames } else { 0 }];
+            let mut channel = vec![0f32; if keep { frames } else { 0 }];
             let mut peak = 0f32;
             for f in 0..n {
                 let v = data[f * ch + c];
-                if into_mine {
+                if keep {
                     channel[f] = v;
-                } else {
+                } else if !into_mine {
                     theirs[f] += v;
                 }
                 let a = v.abs();
@@ -167,7 +168,7 @@ unsafe extern "C-unwind" fn io_proc(
                     peak = a;
                 }
             }
-            if into_mine {
+            if keep {
                 mic.push(channel);
             }
             if global < peaks.len() {
@@ -196,7 +197,7 @@ unsafe extern "C-unwind" fn io_proc(
 
 fn mix_mic(channels: &[Vec<f32>], frames: usize) -> Vec<f32> {
     let peak = |c: &&Vec<f32>| c.iter().fold(0f32, |m, v| m.max(v.abs()));
-    match channels.iter().max_by(|a, b| peak(a).total_cmp(&peak(b))) {
+    match channels.iter().take(2).max_by(|a, b| peak(a).total_cmp(&peak(b))) {
         Some(c) => c.clone(),
         None => vec![0f32; frames],
     }
@@ -512,9 +513,19 @@ mod tests {
         let mut channels: Vec<Vec<f32>> = (0..16).map(|_| quiet()).collect();
         let mut loud = quiet();
         loud[10] = 0.3;
-        channels[3] = loud;
+        channels[1] = loud;
         let out = mix_mic(&channels, 480);
         assert!((peak(&out) - 0.3).abs() < 1e-6, "peak was {}", peak(&out));
+    }
+
+    #[test]
+    fn loopback_channels_after_the_first_two_are_never_taken_as_the_mic() {
+        let mut channels: Vec<Vec<f32>> = (0..16).map(|_| quiet()).collect();
+        channels[0] = tone(0.05);
+        for c in [2, 3, 6, 7] {
+            channels[c] = tone(0.47);
+        }
+        assert_eq!(mix_mic(&channels, 480), channels[0]);
     }
 
     #[test]
