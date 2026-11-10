@@ -70,14 +70,16 @@ impl Cutter {
 
     pub fn push(&mut self, mine: &[f32], theirs: &[f32], split_ok: bool) -> Vec<Stretch> {
         self.split_ok = split_ok;
+        if theirs.is_empty() && self.pending_theirs.is_empty() {
+            self.pending_theirs.resize(self.pending_mine.len() + mine.len(), 0.0);
+        } else if mine.is_empty() && self.pending_mine.is_empty() {
+            self.pending_mine.resize(self.pending_theirs.len() + theirs.len(), 0.0);
+        }
         self.pending_mine.extend_from_slice(mine);
         self.pending_theirs.extend_from_slice(theirs);
-        let n = self.pending_mine.len().max(self.pending_theirs.len());
-        self.pending_mine.resize(n, 0.0);
-        self.pending_theirs.resize(n, 0.0);
 
         let mut out = Vec::new();
-        let whole = n / self.frame * self.frame;
+        let whole = self.pending_mine.len().min(self.pending_theirs.len()) / self.frame * self.frame;
         let a: Vec<f32> = self.pending_mine.drain(..whole).collect();
         let b: Vec<f32> = self.pending_theirs.drain(..whole).collect();
         for (fa, fb) in a.chunks(self.frame).zip(b.chunks(self.frame)) {
@@ -87,7 +89,12 @@ impl Cutter {
     }
 
     pub fn flush(&mut self) -> Option<Stretch> {
-        self.take_stretch(self.frames)
+        let n = self.pending_mine.len().min(self.pending_theirs.len());
+        self.mine.extend(self.pending_mine.drain(..n));
+        self.theirs.extend(self.pending_theirs.drain(..n));
+        self.pending_mine.clear();
+        self.pending_theirs.clear();
+        self.take_stretch(self.frames + 1)
     }
 
     fn frame_in(&mut self, fa: &[f32], fb: &[f32], out: &mut Vec<Stretch>) {
@@ -107,9 +114,9 @@ impl Cutter {
         self.quiet_run = 0;
         self.voiced += 1;
 
-        let turns = self.split_ok && fa != fb;
         let side = side_of(you_rms, them_rms);
-        if let Some(at) = self.turn_cut_at(side, turns) {
+        if let Some(at) = self.turn_cut_at(side) {
+            self.voiced -= TURN_FRAMES;
             out.extend(self.take_stretch(at));
             self.side = Some(side);
             self.voiced = TURN_FRAMES;
@@ -120,10 +127,10 @@ impl Cutter {
         }
     }
 
-    fn turn_cut_at(&mut self, frame_side: Side, turns: bool) -> Option<usize> {
+    fn turn_cut_at(&mut self, frame_side: Side) -> Option<usize> {
         match self.side {
             None if frame_side != Side::Both => self.side = Some(frame_side),
-            Some(side) if turns && frame_side != Side::Both && frame_side != side => {
+            Some(side) if self.split_ok && frame_side != Side::Both && frame_side != side => {
                 self.turn_run += 1;
                 if self.turn_run >= TURN_FRAMES {
                     return Some(self.frames - self.turn_run);
@@ -137,13 +144,13 @@ impl Cutter {
     }
 
     fn take_stretch(&mut self, upto_frames: usize) -> Option<Stretch> {
-        let at = upto_frames * self.frame;
+        let at = (upto_frames * self.frame).min(self.mine.len());
         let tail_mine = self.mine.split_off(at);
         let tail_theirs = self.theirs.split_off(at);
         let mine = std::mem::replace(&mut self.mine, tail_mine);
         let theirs = std::mem::replace(&mut self.theirs, tail_theirs);
         let voiced = self.voiced;
-        self.frames -= upto_frames;
+        self.frames = self.frames.saturating_sub(upto_frames);
         self.voiced = 0;
         self.quiet_run = 0;
         self.side = None;
@@ -258,11 +265,51 @@ mod tests {
     }
 
     #[test]
-    fn identical_channels_never_cut_on_turns() {
-        let both = cat(&[speech(2.0), speech(2.0)]);
-        let out = cut_all(&both, &both, true);
+    fn uneven_pushes_keep_the_two_sides_aligned() {
+        let theirs = cat(&[speech(2.0), silence(0.6), speech(2.3)])[..234_880].to_vec();
+        let mine = silence(theirs.len() as f64 / RATE);
+        let aligned = cut_all(&mine, &theirs, true);
+
+        let mut c = Cutter::new(RATE);
+        let mut uneven = Vec::new();
+        let (mut at_m, mut at_t) = (0, 0);
+        for round in 0..20 {
+            let (m, t) = if round % 2 == 0 { (12_000, 11_488) } else { (11_488, 12_000) };
+            uneven.extend(c.push(&mine[at_m..at_m + m], &theirs[at_t..at_t + t], true));
+            at_m += m;
+            at_t += t;
+        }
+        uneven.extend(c.flush());
+
+        assert_eq!(uneven.len(), aligned.len());
+        for (u, a) in uneven.iter().zip(&aligned) {
+            assert_eq!(u.samples, a.samples);
+        }
+    }
+
+    #[test]
+    fn a_mic_only_stream_still_produces_stretches() {
+        let mut c = Cutter::new(RATE);
+        let mic = cat(&[speech(1.0), silence(0.6)]);
+        let out = c.push(&mic, &[], false);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].voice, "both");
+    }
+
+    #[test]
+    fn a_turn_cut_does_not_count_the_new_speakers_frames_as_voiced_in_the_old_stretch() {
+        let mine = cat(&[silence(2.0), speech(2.0)]);
+        let theirs = cat(&[speech(2.0), silence(2.0)]);
+        let out = cut_all(&mine, &theirs, true);
+        assert!((out[0].voiced_secs - 2.0).abs() < 0.05, "{}", out[0].voiced_secs);
+    }
+
+    #[test]
+    fn flush_keeps_the_last_partial_frame() {
+        let mut c = Cutter::new(RATE);
+        let theirs = speech(1.0)[..48_000 - 100].to_vec();
+        c.push(&silence(1.0)[..theirs.len()], &theirs, true);
+        assert_eq!(c.flush().expect("stretch").samples.len(), theirs.len());
     }
 
     #[test]
