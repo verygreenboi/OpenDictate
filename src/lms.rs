@@ -1,12 +1,13 @@
 use crate::settings::{Settings, TextEngine};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 const PORT: u16 = 1234;
 
 pub fn find() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".lmstudio/bin/lms"));
-    let on_path = std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).collect::<Vec<_>>()).map(|d| d.join("lms"));
-    home.into_iter().chain(on_path).find(|p| p.is_file())
+    let lms = PathBuf::from(std::env::var_os("HOME")?).join(".lmstudio/bin/lms");
+    lms.is_file().then_some(lms)
 }
 
 fn port_of(url: &str) -> Option<u16> {
@@ -40,22 +41,84 @@ fn parse_loaded(json: &str) -> Vec<String> {
     models.iter().flat_map(|m| [m["identifier"].as_str(), m["modelKey"].as_str()]).flatten().map(String::from).collect()
 }
 
-fn ensure_with(s: &Settings, run: &dyn Fn(&[String]) -> Result<String, String>) -> Result<(), String> {
+fn ensure_with(s: &Settings, run: &dyn Fn(&[String]) -> Result<String, String>, log: &dyn Fn(&str)) -> Result<(), String> {
     let model = if s.meeting_model.trim().is_empty() { &s.text_model } else { &s.meeting_model };
-    let running = parse_running(&run(&["server".into(), "status".into(), "--json".into()])?);
-    let loaded = if running { parse_loaded(&run(&["ps".into(), "--json".into()])?) } else { Vec::new() };
-    steps(running, &loaded, model).iter().try_for_each(|step| run(step).map(drop))
+    let model = model.trim();
+    if model.starts_with('-') {
+        return Err(format!("refusing model name {model:?}"));
+    }
+    let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    if !parse_running(&run(&args(&["server", "status", "--json"]))?) {
+        run(&args(&["server", "start"]))?;
+        log("started the server");
+    }
+    let loaded = parse_loaded(&run(&args(&["ps", "--json"]))?);
+    for step in steps(true, &loaded, model) {
+        run(&step)?;
+        log(&format!("loaded {model}"));
+    }
+    Ok(())
 }
 
-pub fn ensure(s: &Settings) -> Result<(), String> {
-    let lms = find().ok_or("lms is not installed")?;
-    ensure_with(s, &|args| {
-        let out = std::process::Command::new(&lms).args(args).output().map_err(|e| format!("lms {}: {e}", args.join(" ")))?;
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        } else {
-            Err(format!("lms {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+fn run_command(program: &Path, args: &[String], timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let shown = format!("lms {}", args.join(" "));
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("{shown}: {e}"))?;
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut buf = String::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_string(&mut buf);
+            }
+            buf
+        })
+    }
+    let (out, err) = (drain(child.stdout.take()), drain(child.stderr.take()));
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait().map_err(|e| format!("{shown}: {e}"))? {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{shown}: timed out after {}s", timeout.as_secs_f32()));
+            }
+            None => std::thread::sleep(Duration::from_millis(50)),
         }
+    };
+    let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+    if status.success() { Ok(out) } else { Err(format!("{shown}: {}", err.trim())) }
+}
+
+fn exclusive(flag: &AtomicBool, work: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    if flag.swap(true, Ordering::SeqCst) {
+        return Err("already starting".into());
+    }
+    let result = work();
+    flag.store(false, Ordering::SeqCst);
+    result
+}
+
+static ENSURING: AtomicBool = AtomicBool::new(false);
+
+pub fn ensure(s: &Settings, log: &dyn Fn(&str)) -> Result<(), String> {
+    let lms = find().ok_or("lms is not installed")?;
+    exclusive(&ENSURING, || {
+        ensure_with(
+            s,
+            &|args| {
+                let long = args.first().is_some_and(|a| a == "load");
+                run_command(&lms, args, Duration::from_secs(if long { 180 } else { 15 }))
+            },
+            log,
+        )
     })
 }
 
@@ -140,7 +203,7 @@ mod tests {
                 _ => String::new(),
             })
         };
-        ensure_with(s, &run).unwrap();
+        ensure_with(s, &run, &|_| {}).unwrap();
         calls.into_inner()
     }
 
@@ -153,7 +216,7 @@ mod tests {
     #[test]
     fn ensure_starts_the_server_and_loads_the_meeting_model_over_the_text_model() {
         let calls = recorded(&lm("http://localhost:1234/v1", "small", "big"), r#"{"running":false}"#, "[]");
-        assert_eq!(calls, vec![strs(&["server", "status", "--json"]), strs(&["server", "start"]), strs(&["load", "big", "-y"])]);
+        assert_eq!(calls, vec![strs(&["server", "status", "--json"]), strs(&["server", "start"]), strs(&["ps", "--json"]), strs(&["load", "big", "-y"])]);
     }
 
     #[test]
@@ -161,6 +224,75 @@ mod tests {
         let run = |a: &[String]| -> Result<String, String> {
             if a[0] == "load" { Err("no such model".into()) } else { Ok(r#"{"running":true}"#.into()) }
         };
-        assert!(ensure_with(&lm("http://localhost:1234/v1", "x", ""), &run).unwrap_err().contains("no such model"));
+        assert!(ensure_with(&lm("http://localhost:1234/v1", "x", ""), &run, &|_| {}).unwrap_err().contains("no such model"));
+    }
+
+    #[test]
+    fn a_model_already_loaded_while_the_server_was_off_is_not_loaded_again() {
+        let calls = recorded(&lm("http://localhost:1234/v1", "phi", ""), r#"{"running":false}"#, r#"[{"identifier":"phi","modelKey":"phi"}]"#);
+        assert_eq!(calls, vec![strs(&["server", "status", "--json"]), strs(&["server", "start"]), strs(&["ps", "--json"])]);
+    }
+
+    #[test]
+    fn a_model_name_that_looks_like_a_flag_is_refused_before_anything_runs() {
+        let run = |a: &[String]| -> Result<String, String> { panic!("ran {a:?}") };
+        assert!(ensure_with(&lm("http://localhost:1234/v1", "--engine-cwd", ""), &run, &|_| {}).is_err());
+    }
+
+    #[test]
+    fn logs_what_it_started_and_loaded() {
+        let logged = RefCell::new(Vec::new());
+        let run = |a: &[String]| -> Result<String, String> { Ok(if a[0] == "server" && a[1] == "status" { r#"{"running":false}"#.into() } else { "[]".into() }) };
+        ensure_with(&lm("http://localhost:1234/v1", "phi", ""), &run, &|l| logged.borrow_mut().push(l.to_string())).unwrap();
+        assert_eq!(logged.into_inner(), strs(&["started the server", "loaded phi"]));
+    }
+
+    #[test]
+    fn a_second_ensure_while_one_runs_returns_already_starting() {
+        let flag = AtomicBool::new(false);
+        let inner = exclusive(&flag, || exclusive(&flag, || Ok(())));
+        assert_eq!(inner, Err("already starting".into()));
+        assert!(exclusive(&flag, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn the_exclusive_flag_is_released_when_the_work_fails() {
+        let flag = AtomicBool::new(false);
+        assert!(exclusive(&flag, || Err("boom".into())).is_err());
+        assert!(exclusive(&flag, || Ok(())).is_ok());
+    }
+
+    fn script(name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("lms-test-{}-{name}", std::process::id()));
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_command_that_outlives_its_timeout_is_killed_and_reported() {
+        let sleeper = script("sleep", "exec sleep 30");
+        let started = std::time::Instant::now();
+        let err = run_command(&sleeper, &strs(&["ps"]), Duration::from_millis(200)).unwrap_err();
+        std::fs::remove_file(&sleeper).ok();
+        assert!(err.contains("timed out"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_command_reads_no_stdin_and_returns_its_output() {
+        let echo = script("echo", "cat >/dev/null; echo \"$1 ok\"");
+        let out = run_command(&echo, &strs(&["ps"]), Duration::from_secs(5));
+        std::fs::remove_file(&echo).ok();
+        assert_eq!(out.unwrap().trim(), "ps ok");
+    }
+
+    #[test]
+    fn a_failing_command_reports_its_stderr() {
+        let bad = script("bad", "echo nope >&2; exit 3");
+        let err = run_command(&bad, &strs(&["load"]), Duration::from_secs(5)).unwrap_err();
+        std::fs::remove_file(&bad).ok();
+        assert!(err.contains("nope"), "{err}");
     }
 }

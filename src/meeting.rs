@@ -216,7 +216,7 @@ impl Session {
         if s.talking_points && crate::lms::is_lm_studio(s) && crate::lms::find().is_some() {
             let (dir, s) = (dir.clone(), s.clone());
             std::thread::spawn(move || {
-                if let Err(e) = crate::lms::ensure(&s) {
+                if let Err(e) = crate::lms::ensure(&s, &|l| log(&dir, &format!("lm studio: {l}"))) {
                     log(&dir, &format!("lm studio: {e}"));
                 }
             });
