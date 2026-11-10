@@ -24,7 +24,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// What whisper.cpp wants, and what the chunks are written as.
 const OUT_RATE: u32 = 16_000;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -63,7 +62,7 @@ pub struct Live {
     /// chunk means nothing is reaching the recorder at all, which is a very
     /// different problem from a quiet room and has to be said differently.
     pub peak: f32,
-    pub chunks: usize,
+    pub samples: usize,
     /// Whether the microphone ever contributed anything. The aggregate can
     /// report a microphone and then deliver nothing from it, and a meeting
     /// that says "you and everyone on the call" when your side was never
@@ -231,7 +230,7 @@ impl Session {
             m.ended = Some(now());
             if let Ok(l) = self.live.lock() {
                 m.peak = l.peak;
-                if !l.heard_you && l.chunks > 0 {
+                if !l.heard_you && !no_audio_reached(l.samples) {
                     m.source = "Everyone on the call · your microphone was not captured".into();
                 }
             }
@@ -271,9 +270,6 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
                     }
                 }
             }
-            if let Ok(mut l) = live.lock() {
-                l.chunks += 1;
-            }
             at_ms += (st.secs * 1000.0) as u64;
             index += 1;
         }
@@ -290,6 +286,7 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         }
         if let Ok(mut l) = live.lock() {
             l.elapsed = started.elapsed().as_secs_f32();
+            l.samples += got.mine.len().max(got.theirs.len());
             l.heard_you |= rms(&got.mine) > 0.001;
             l.peak = l.peak.max(peak(&got.mine)).max(peak(&got.theirs));
         }
@@ -297,7 +294,7 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         if ending {
             process(cutter.flush().into_iter().collect());
             if let Ok(mut l) = live.lock() {
-                if l.chunks == 0 {
+                if no_audio_reached(l.samples) {
                     l.warning = Some("No audio reached the recorder.".into());
                     log(&dir, "no audio arrived at all");
                 }
@@ -306,6 +303,10 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
+}
+
+fn no_audio_reached(samples: usize) -> bool {
+    samples == 0
 }
 
 fn peak(v: &[f32]) -> f32 {
@@ -325,10 +326,9 @@ fn handle_stretch(
     transcribe: &dyn Fn(&[u8]) -> Result<String, String>,
 ) -> Result<Option<Segment>, String> {
     let samples = to_16k(&st.samples, rate);
-    let peak = peak(&samples);
-    let rms = rms(&samples);
-    log(dir, &format!("{index:03} {:5.1}s {:<4} peak {peak:.3} rms {rms:.4}", st.secs, st.voice));
-    if !crate::cut::worth_transcribing(peak, rms, st.voiced_secs) {
+    let (loudest, level) = (peak(&samples), rms(&samples));
+    log(dir, &format!("{index:03} {:5.1}s {:<4} peak {loudest:.3} rms {level:.4}", st.secs, st.voice));
+    if !crate::cut::worth_transcribing(loudest, level, st.voiced_secs) {
         log(dir, "    skipped: too quiet to be speech");
         return Ok(None);
     }
@@ -644,7 +644,18 @@ mod tests {
         let r = handle_stretch(&dir, 0, 0, &stretch(0.01, 2.0), RATE, &|_| panic!("whisper was called"));
         assert!(matches!(r, Ok(None)));
         assert!(!dir.join("audio/000.wav").exists());
+        assert!(!dir.join("transcript.jsonl").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_silent_meeting_is_not_reported_as_no_audio() {
+        assert!(!no_audio_reached(48_000 * 60));
+    }
+
+    #[test]
+    fn a_meeting_where_no_samples_arrive_is_reported_as_no_audio() {
+        assert!(no_audio_reached(0));
     }
 
     #[test]
