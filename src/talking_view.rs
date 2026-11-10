@@ -9,7 +9,8 @@ const LABELS: [&str; 3] = ["YOU", "THEM", "BOTH"];
 #[derive(Default)]
 pub struct ViewState {
     pub panel_open: bool,
-    pub selection: Option<String>,
+    pub seen_suggestions: Option<talking::Suggestions>,
+    pub selection: Option<(String, egui::Pos2)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -21,27 +22,26 @@ pub enum ViewAction {
 
 pub fn draw(ui: &mut egui::Ui, meeting: &meeting::Live, talking: &talking::Live, vs: &mut ViewState) -> Option<ViewAction> {
     ui.painter().rect_filled(ui.max_rect(), 0.0, theme::PAPER());
-    let mut action = None;
     let pad = Frame::new().inner_margin(Margin::symmetric(14, 8));
     egui::Panel::top("tp-bar").frame(pad).show(ui, |ui| title_bar(ui, meeting, talking));
-    if !talking.chips.is_empty() {
-        egui::Panel::bottom("tp-context").frame(pad.fill(theme::SURFACE())).show(ui, |ui| {
-            action = action.take().or(chips(ui, &talking.chips));
-        });
-    }
-    egui::Panel::left("tp-transcript")
+    let removed = (!talking.chips.is_empty())
+        .then(|| egui::Panel::bottom("tp-context").frame(pad.fill(theme::SURFACE())).show(ui, |ui| chips(ui, &talking.chips)).inner)
+        .flatten();
+    let picked = egui::Panel::left("tp-transcript")
         .resizable(true)
         .default_size(ui.available_width() * 0.52)
         .frame(Frame::new().inner_margin(Margin::same(14)))
-        .show(ui, |ui| action = action.take().or(transcript(ui, meeting, vs)));
-    egui::CentralPanel::no_frame().show(ui, |ui| {
-        Frame::new().inner_margin(Margin::same(14)).show(ui, |ui| {
-            egui::ScrollArea::vertical().id_salt("tp-notes").show(ui, |ui| {
-                action = action.take().or(notes(ui, talking, vs));
-            });
-        });
-    });
-    action
+        .show(ui, |ui| transcript(ui, meeting, vs))
+        .inner;
+    let copied = egui::CentralPanel::no_frame()
+        .show(ui, |ui| {
+            Frame::new()
+                .inner_margin(Margin::same(14))
+                .show(ui, |ui| egui::ScrollArea::vertical().id_salt("tp-notes").show(ui, |ui| notes(ui, talking, vs)).inner)
+                .inner
+        })
+        .inner;
+    removed.or(picked).or(copied)
 }
 
 fn title_bar(ui: &mut egui::Ui, meeting: &meeting::Live, talking: &talking::Live) {
@@ -113,15 +113,16 @@ fn transcript(ui: &mut egui::Ui, meeting: &meeting::Live, vs: &mut ViewState) ->
         })
         .inner;
     if out.response.has_focus() {
-        vs.selection = out
-            .cursor_range
-            .map(|r| r.slice_str(&text).trim().to_owned())
-            .filter(|s| !s.is_empty());
+        vs.selection = out.cursor_range.and_then(|r| {
+            let picked = r.slice_str(&text).trim();
+            let at = out.galley_pos + out.galley.pos_from_cursor(r.primary).left_bottom().to_vec2();
+            (!picked.is_empty()).then(|| (picked.to_owned(), at))
+        });
     }
-    let sel = vs.selection.clone()?;
-    let at = out.cursor_range.map_or(out.response.rect.left_top(), |r| {
-        out.galley_pos + out.galley.pos_from_cursor(r.primary).left_bottom().to_vec2()
-    });
+    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        vs.selection = None;
+    }
+    let (sel, at) = vs.selection.clone()?;
     let mut open = true;
     let mut action = None;
     egui::Popup::from_response(&out.response)
@@ -186,6 +187,9 @@ fn notes(ui: &mut egui::Ui, talking: &talking::Live, vs: &mut ViewState) -> Opti
     ui.add_space(12.0);
     let suggestions = talking.suggestions.as_ref().filter(|s| !s.items.is_empty())?;
     if !vs.panel_open {
+        if vs.seen_suggestions.as_ref() == Some(suggestions) {
+            return None;
+        }
         let note = theme::soft(theme::ACCENT(), 10, 0.0, 0).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -211,6 +215,7 @@ fn notes(ui: &mut egui::Ui, talking: &talking::Live, vs: &mut ViewState) -> Opti
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if cross(ui, "Close suggestions").clicked() {
                     vs.panel_open = false;
+                    vs.seen_suggestions = Some(suggestions.clone());
                 }
             });
         });
@@ -403,8 +408,67 @@ mod tests {
     }
 
     #[test]
+    fn closing_the_panel_hides_the_notification_until_new_suggestions_arrive() {
+        let mut h = harness(talking::Live { suggestions: Some(suggestions()), ..ready() }, ViewState::default());
+        h.get_by_label("Suggestions").click();
+        h.run();
+        h.get_by_label("Close suggestions").click();
+        h.run();
+        assert!(h.query_by_label("Suggestions").is_none());
+        assert!(h.query_by_label("You were asked for an estimate by Friday").is_none());
+
+        let newer = Suggestions { reason: "They asked who owns the migration".into(), ..suggestions() };
+        h.state_mut().talking.lock().unwrap().suggestions = Some(newer);
+        h.run();
+        h.get_by_label("They asked who owns the migration");
+    }
+
+    fn select_all_of_the_transcript(h: &mut Harness<'static, Fixture>) {
+        h.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
+        h.run();
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+        h.run();
+    }
+
+    fn press(h: &mut Harness<'static, Fixture>, pos: egui::Pos2, pressed: bool) {
+        h.event(egui::Event::PointerMoved(pos));
+        h.step();
+        h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        if pressed { h.step() } else { h.run(); }
+    }
+
+    #[test]
+    fn selecting_transcript_text_offers_search_and_copy_and_the_menu_stays_put_while_copy_is_clicked() {
+        let mut h = harness(ready(), ViewState::default());
+        select_all_of_the_transcript(&mut h);
+
+        assert!(h.get_by_label_contains("Search “").accesskit_node().is_disabled());
+        let copy = h.get_by_label("Copy").rect();
+        h.get_by_label("Copy").focus();
+        h.run();
+        assert_eq!(h.get_by_label("Copy").rect(), copy);
+        press(&mut h, copy.center(), true);
+        assert_eq!(h.get_by_label("Copy").rect(), copy);
+        press(&mut h, copy.center(), false);
+
+        let all = transcript_text(&h.state().meeting.segments);
+        assert_eq!(h.state().actions, vec![ViewAction::Copy(all)]);
+        assert!(h.query_by_label("Copy").is_none());
+    }
+
+    #[test]
+    fn escape_closes_the_selection_menu() {
+        let mut h = harness(ready(), ViewState::default());
+        select_all_of_the_transcript(&mut h);
+        h.get_by_label("Copy");
+        h.key_press(egui::Key::Escape);
+        h.run();
+        assert!(h.query_by_label("Copy").is_none());
+    }
+
+    #[test]
     fn search_is_disabled_with_a_reason_when_there_is_no_brave_key() {
-        let mut h = harness(ready(), ViewState { selection: Some("Stripe".into()), ..Default::default() });
+        let mut h = harness(ready(), ViewState { selection: Some(("Stripe".into(), egui::pos2(20.0, 80.0))), ..Default::default() });
         let search = h.get_by_label("Search “Stripe”");
         assert!(search.accesskit_node().is_disabled());
         h.get_by_label("Add a Brave Search key in Models to search");
