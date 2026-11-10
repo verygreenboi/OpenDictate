@@ -134,15 +134,26 @@ impl Aligner {
 
     pub fn push_call(&mut self, samples: &[f32], first_host_ns: Option<u64>) {
         let at = self.call.next_index(self.emitted);
-        self.call.push(samples, first_host_ns, self.rate, at);
+        if self.call.push(samples, first_host_ns, self.rate, at) {
+            self.restart_drift_baselines();
+        }
     }
 
     pub fn push_mic(&mut self, samples: &[f32], first_host_ns: Option<u64>) {
         let at = self.mic.next_index(self.emitted);
         if self.mic.push(samples, first_host_ns, self.rate, at) {
-            self.fixed = 0.0;
-            self.correcting = false;
+            self.restart_drift_baselines();
         }
+    }
+
+    // Both spans must start together, or a short span's timestamp jitter is multiplied by the other's long span.
+    fn restart_drift_baselines(&mut self) {
+        for side in [&mut self.mic, &mut self.call] {
+            side.first = side.last.or(side.first);
+            side.last = None;
+        }
+        self.fixed = 0.0;
+        self.correcting = false;
     }
 
     fn place_new_anchor(&mut self) {
@@ -505,6 +516,28 @@ mod aligner_tests {
         let first_mic = mine_all.iter().position(|s| *s == 1.0).expect("mic never heard");
         let lined_up_with = theirs_all[first_mic] as f64;
         assert!((lined_up_with - 2.0 * RATE).abs() <= RATE / 100.0, "lined up with {lined_up_with}");
+    }
+
+    #[test]
+    fn a_call_re_anchor_with_timestamp_jitter_triggers_no_phantom_drift() {
+        let (hour, gap, minutes) = (14_400, 14_400..14_408, 14_408 + 4 * 240);
+        let mut al = Aligner::new(RATE);
+        let mut prev = None;
+        let mut corrections_after_resume = 0;
+        for k in 0..minutes {
+            let t = 1_000_000_000 + k as u64 * DRAIN_NS;
+            if !gap.contains(&k) {
+                let jitter = if k < hour { 0 } else if k % 2 == 0 { 1_000 } else { -1_000i64 };
+                al.push_call(&ramp(k * DRAIN, DRAIN), Some(t.saturating_add_signed(jitter)));
+            }
+            al.push_mic(&ramp(k * DRAIN + 1, DRAIN), Some(t));
+            let (mine, _) = al.take(t + DRAIN_NS);
+            let changed = mic_changes(&mut prev, &mine).len();
+            if k >= gap.end {
+                corrections_after_resume += changed;
+            }
+        }
+        assert_eq!(corrections_after_resume, 0, "offset {}", al.offset_ms());
     }
 
     fn assert_dead_side_is_padded(mic_dies: bool) {
