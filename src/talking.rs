@@ -50,6 +50,9 @@ pub struct Tracked {
 const RECENT_MS: u64 = 180_000;
 const BUNDLE_CAP: usize = 12_000;
 const CHIP_CAP: usize = 4;
+const HEADER_CAP: usize = BUNDLE_CAP - 6_000;
+const BUNDLE_ACTIONS: usize = 15;
+const TRACKED_CAP: usize = 30;
 const CHIP_TEXT_CAP: usize = 1_600;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024 * 1024;
 
@@ -118,7 +121,22 @@ pub fn notes_schema() -> serde_json::Value {
     })
 }
 
-pub fn bundle(chips: &[Chip], summary: &str, actions: &[Tracked], segments: &[Segment], now_ms: u64) -> String {
+fn floor_boundary(s: &str, mut at: usize) -> usize {
+    at = at.min(s.len());
+    while !s.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+fn ceil_boundary(s: &str, mut at: usize) -> usize {
+    while at < s.len() && !s.is_char_boundary(at) {
+        at += 1;
+    }
+    at.min(s.len())
+}
+
+fn header(chips: &[Chip], summary: &str, actions: &[Tracked]) -> String {
     let mut out = String::from("Search results:\n");
     for c in chips {
         out += &format!("- {}: {}\n", c.query, c.text);
@@ -127,49 +145,102 @@ pub fn bundle(chips: &[Chip], summary: &str, actions: &[Tracked], segments: &[Se
     for t in actions {
         out += &format!("- {}: {}\n", t.action.who, t.action.what);
     }
-    out += "\nRecent transcript:\n";
+    out + "\nRecent transcript:\n"
+}
+
+pub fn bundle(chips: &[Chip], summary: &str, actions: &[Tracked], segments: &[Segment], now_ms: u64) -> String {
+    let mut chips = chips.to_vec();
+    let mut summary = summary.to_string();
+    let mut actions = &actions[actions.len().saturating_sub(BUNDLE_ACTIONS)..];
+    let mut head = header(&chips, &summary, actions);
+
+    while head.len() > HEADER_CAP {
+        let over = head.len() - HEADER_CAP;
+        if let Some(c) = chips.iter_mut().filter(|c| !c.text.is_empty()).max_by_key(|c| c.text.len()) {
+            let keep = floor_boundary(&c.text, c.text.len().saturating_sub(over));
+            c.text.truncate(keep);
+        } else if !summary.is_empty() {
+            let from = ceil_boundary(&summary, over.min(summary.len()));
+            summary.replace_range(..from, "");
+        } else if let Some((_, rest)) = actions.split_first() {
+            actions = rest;
+        } else {
+            head.truncate(floor_boundary(&head, HEADER_CAP));
+            break;
+        }
+        head = header(&chips, &summary, actions);
+    }
 
     let floor = now_ms.saturating_sub(RECENT_MS);
     let mut lines: Vec<String> = Vec::new();
-    let mut used = out.len();
+    let mut used = head.len();
     for s in segments.iter().rev().filter(|s| s.at_ms >= floor) {
         let voice = if s.voice.is_empty() { "both" } else { &s.voice };
-        let line = format!("[{voice}] {}\n", s.text.trim());
-        if used + line.len() > BUNDLE_CAP {
+        let label = format!("[{voice}] ");
+        let text = s.text.trim();
+        if used + label.len() + text.len() + 1 > BUNDLE_CAP {
             if lines.is_empty() {
-                let room = BUNDLE_CAP.saturating_sub(used + 1);
-                let mut cut = room.min(line.len());
-                while !line.is_char_boundary(cut) {
-                    cut -= 1;
-                }
-                lines.push(format!("{}\n", &line[..cut]));
+                let room = BUNDLE_CAP.saturating_sub(used + label.len() + 1);
+                lines.push(format!("{label}{}\n", &text[..floor_boundary(text, room)]));
             }
             break;
         }
-        used += line.len();
-        lines.push(line);
+        used += label.len() + text.len() + 1;
+        lines.push(format!("{label}{text}\n"));
     }
     lines.reverse();
-    out + &lines.concat()
+    head + &lines.concat()
 }
 
-fn parse_object<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, String> {
+fn parse_object<T>(raw: &str, build: impl Fn(&serde_json::Value) -> Option<T>) -> Result<T, String> {
     let text = crate::engines::strip_thinking(raw);
-    let (Some(a), Some(b)) = (text.find('{'), text.rfind('}')) else {
-        return Err("the model's answer had no JSON in it".into());
-    };
-    if b < a {
-        return Err("the model's answer had no JSON in it".into());
-    }
-    serde_json::from_str(&text[a..=b]).map_err(|e| format!("the model's answer wasn't valid JSON: {e}"))
+    text.match_indices('{')
+        .find_map(|(i, _)| {
+            let value = serde_json::Deserializer::from_str(&text[i..]).into_iter::<serde_json::Value>().next()?.ok()?;
+            build(&value)
+        })
+        .ok_or_else(|| "the model's answer had no usable JSON in it".to_string())
+}
+
+fn text_of(v: &serde_json::Value, field: &str) -> String {
+    v.get(field).and_then(|t| t.as_str()).unwrap_or("").trim().to_string()
 }
 
 pub fn parse_suggestions(raw: &str) -> Result<Suggestions, String> {
-    parse_object(raw)
+    parse_object(raw, |v| {
+        let items = v.get("items")?.as_array()?;
+        let items = items
+            .iter()
+            .filter_map(|i| {
+                let kind = match text_of(i, "kind").to_lowercase().as_str() {
+                    "reply" => Kind::Reply,
+                    "ask" => Kind::Ask,
+                    _ => return None,
+                };
+                let text = text_of(i, "text");
+                (!text.is_empty()).then_some(Suggestion { kind, text })
+            })
+            .collect();
+        Some(Suggestions { reason: text_of(v, "reason"), items })
+    })
 }
 
 pub fn parse_notes(raw: &str) -> Result<NotesReply, String> {
-    parse_object(raw)
+    parse_object(raw, |v| {
+        let actions = v.get("actions").and_then(|a| a.as_array());
+        if actions.is_none() && v.get("summary").is_none() {
+            return None;
+        }
+        let actions = actions
+            .into_iter()
+            .flatten()
+            .filter_map(|a| {
+                let what = text_of(a, "what");
+                (!what.is_empty()).then(|| Action { who: text_of(a, "who"), what })
+            })
+            .collect();
+        Some(NotesReply { summary: text_of(v, "summary"), actions })
+    })
 }
 
 fn key(what: &str) -> String {
@@ -185,10 +256,13 @@ pub fn merge_actions(list: &mut Vec<Tracked>, incoming: Vec<Action>) {
             list.push(Tracked { action, new: true });
         }
     }
+    if list.len() > TRACKED_CAP {
+        list.drain(..list.len() - TRACKED_CAP);
+    }
 }
 
 pub fn add_chip(chips: &mut Vec<Chip>, mut chip: Chip) {
-    chip.text = chip.text.chars().take(CHIP_TEXT_CAP).collect();
+    chip.text.truncate(floor_boundary(&chip.text, CHIP_TEXT_CAP));
     chips.push(chip);
     while chips.len() > CHIP_CAP {
         chips.remove(0);
@@ -371,10 +445,12 @@ mod tests {
     }
 
     #[test]
-    fn chip_text_is_cut_to_1600_chars() {
+    fn chip_text_is_cut_to_1600_bytes_on_a_char_boundary() {
         let mut c = vec![];
         add_chip(&mut c, chip("q", &"é".repeat(5000)));
-        assert_eq!(c[0].text.chars().count(), 1600);
+        assert_eq!(c[0].text.len(), 1600);
+        add_chip(&mut c, chip("q", &format!("a{}", "é".repeat(5000))));
+        assert_eq!(c[1].text.len(), 1599);
     }
 
     #[test]
@@ -478,5 +554,108 @@ mod tests {
         let mut s = settings(TextEngine::OpenAiCompatible, " https://api.openai.com/v1 ");
         s.talking_cloud_host = "  API.openai.com ".into();
         assert_eq!(availability(&s, 8 * GIB), Availability::Ready);
+    }
+
+    fn tracked(n: usize) -> Vec<Tracked> {
+        (0..n).map(|i| Tracked { action: act("Ann", &format!("task number {i} {}", "w".repeat(60))), new: false }).collect()
+    }
+
+    #[test]
+    fn search_results_never_push_out_the_recent_transcript() {
+        let chips: Vec<Chip> = (0..4).map(|i| chip(&format!("query {i}"), &"é".repeat(800))).collect();
+        let chips: Vec<Chip> = chips.into_iter().map(|c| Chip { text: "é".repeat(1600), ..c }).collect();
+        let b = bundle(&chips, &"s".repeat(9_000), &tracked(15), &[seg(10, "you", "older"), seg(20, "them", "the newest words")], 30);
+        assert!(b.len() <= 12_000, "{}", b.len());
+        assert!(b.contains("[them] the newest words"));
+        assert!(b.contains("[you] older"));
+    }
+
+    #[test]
+    fn a_long_summary_keeps_its_latest_part() {
+        let summary = format!("{}THE-END", "old ".repeat(3_000));
+        let b = bundle(&[], &summary, &[], &[seg(1, "you", "hi")], 2);
+        assert!(b.contains("THE-END"));
+        assert!(b.len() <= 12_000);
+    }
+
+    #[test]
+    fn the_oldest_actions_go_first_when_the_header_is_full() {
+        let big: Vec<Tracked> = (0..15).map(|i| Tracked { action: act("Ann", &format!("task number {i} {}", "w".repeat(600))), new: false }).collect();
+        let b = bundle(&[], "", &big, &[seg(1, "you", "hi")], 2);
+        assert!(b.len() <= 12_000);
+        assert!(b.contains("task number 14 "));
+        assert!(!b.contains("task number 0 "));
+    }
+
+    #[test]
+    fn the_tracked_list_holds_at_most_30_dropping_the_oldest() {
+        let mut l = vec![];
+        merge_actions(&mut l, (0..40).map(|i| act("A", &format!("item {i}"))).collect());
+        assert_eq!(l.len(), 30);
+        assert_eq!(l[0].action.what, "item 10");
+        assert_eq!(l[29].action.what, "item 39");
+    }
+
+    #[test]
+    fn only_the_15_newest_actions_reach_the_bundle() {
+        let b = bundle(&[], "", &tracked(30), &[], 0);
+        assert!(!b.contains("task number 14 "));
+        assert!(b.contains("task number 15 "));
+        assert!(b.contains("task number 29 "));
+    }
+
+    #[test]
+    fn a_cut_newest_line_keeps_its_label_whole() {
+        let b = bundle(&[], "", &[], &[seg(10, "them", &"x".repeat(20_000))], 20);
+        assert!(b.contains("[them] xxx"));
+        assert!(b.len() <= 12_000);
+    }
+
+    #[test]
+    fn suggestions_without_a_reason_still_parse() {
+        let s = parse_suggestions("{\"items\":[]}").unwrap();
+        assert_eq!(s, Suggestions::default());
+    }
+
+    #[test]
+    fn suggestion_kind_is_case_insensitive() {
+        let s = parse_suggestions("{\"items\":[{\"kind\":\"Reply\",\"text\":\"Sure\"}]}").unwrap();
+        assert_eq!(s.items, vec![Suggestion { kind: Kind::Reply, text: "Sure".into() }]);
+    }
+
+    #[test]
+    fn suggestions_with_an_unknown_kind_or_empty_text_are_dropped_not_fatal() {
+        let raw = "{\"reason\":\"r\",\"items\":[{\"kind\":\"question\",\"text\":\"a\"},{\"kind\":\"ask\",\"text\":\"  \"},{\"kind\":\"ask\"},7,{\"kind\":\"ask\",\"text\":\"keep\"}]}";
+        let s = parse_suggestions(raw).unwrap();
+        assert_eq!(s.items, vec![Suggestion { kind: Kind::Ask, text: "keep".into() }]);
+    }
+
+    #[test]
+    fn an_action_without_who_still_parses_and_one_without_what_is_dropped() {
+        let n = parse_notes("{\"summary\":\"s\",\"actions\":[{\"what\":\"ship it\"},{\"who\":\"Bo\"}]}").unwrap();
+        assert_eq!(n.actions, vec![act("", "ship it")]);
+    }
+
+    #[test]
+    fn notes_without_a_summary_still_parse() {
+        assert_eq!(parse_notes("{\"actions\":[]}").unwrap().summary, "");
+    }
+
+    #[test]
+    fn braces_after_the_json_do_not_break_parsing() {
+        let n = parse_notes("{\"summary\":\"s\",\"actions\":[]}\nNote: use {name}").unwrap();
+        assert_eq!(n.summary, "s");
+    }
+
+    #[test]
+    fn braces_before_the_json_do_not_break_parsing() {
+        let n = parse_notes("Here's {the} answer: {\"summary\":\"s\",\"actions\":[]}").unwrap();
+        assert_eq!(n.summary, "s");
+    }
+
+    #[test]
+    fn with_two_objects_back_to_back_the_first_valid_one_wins() {
+        let n = parse_notes("{\"summary\":\"one\",\"actions\":[]}{\"summary\":\"two\",\"actions\":[]}").unwrap();
+        assert_eq!(n.summary, "one");
     }
 }
