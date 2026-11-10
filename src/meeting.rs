@@ -343,6 +343,9 @@ fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex
         while let Some(side) = aligner.padded() {
             log(&dir, &format!("{side} sent nothing for {} ms, padding it with silence", crate::align::HOLD_MS));
         }
+        while let Some(side) = aligner.dropped() {
+            log(&dir, &format!("{side} got more than {} ms ahead of the other side, dropping its oldest audio", crate::align::MAX_BACKLOG_MS));
+        }
         if last_levels.elapsed() >= std::time::Duration::from_secs(30) {
             log(&dir, &diagnostics_line(levels.0, levels.1, aligner.offset_ms()));
             levels = (0.0, 0.0);

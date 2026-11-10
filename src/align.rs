@@ -47,6 +47,8 @@ pub const HOLD_MS: u64 = 500;
 pub const DRIFT_START_MS: f32 = 10.0;
 pub const DRIFT_STOP_MS: f32 = 2.0;
 pub const MAX_FIX_PER_TAKE: usize = 4;
+pub const MAX_SHIFT_MS: u64 = 5_000;
+pub const MAX_BACKLOG_MS: u64 = 3_000;
 
 #[derive(Default)]
 struct Side {
@@ -58,6 +60,7 @@ struct Side {
     fresh: bool,
     heard_at: Option<u64>,
     padding: bool,
+    dropping: bool,
     anchor: Option<(u64, i64)>,
     pending: Option<(u64, i64)>,
 }
@@ -107,6 +110,18 @@ impl Side {
             self.buf.resize(other_len, 0.0);
         }
     }
+
+    fn drop_backlog_over(&mut self, cap: usize, name: &'static str, events: &mut Vec<&'static str>) {
+        let excess = self.buf.len().saturating_sub(cap);
+        if excess > 0 && !self.dropping {
+            events.push(name);
+        }
+        self.dropping = excess > 0;
+        self.buf.drain(..excess);
+        for (_, at) in self.anchor.iter_mut().chain(self.pending.iter_mut()) {
+            *at -= excess as i64;
+        }
+    }
 }
 
 pub struct Aligner {
@@ -117,6 +132,7 @@ pub struct Aligner {
     fixed: f64,
     correcting: bool,
     events: Vec<&'static str>,
+    drops: Vec<&'static str>,
 }
 
 impl Aligner {
@@ -129,6 +145,7 @@ impl Aligner {
             fixed: 0.0,
             correcting: false,
             events: Vec::new(),
+            drops: Vec::new(),
         }
     }
 
@@ -174,6 +191,10 @@ impl Aligner {
         self.call.pending = None;
         let lead = ((placed_t as f64 - ref_t as f64) * self.rate / 1e9).round() as i64;
         let shift = ref_at + lead - placed_at;
+        // Only a stale anchor is this far out, after a sleep: start both sides afresh here instead of filling the gap.
+        if shift.unsigned_abs() as f64 > MAX_SHIFT_MS as f64 * self.rate / 1000.0 {
+            return;
+        }
         let emitted = self.emitted;
         let (placed, reference) =
             if mic_is_placed { (&mut self.mic, &mut self.call) } else { (&mut self.call, &mut self.mic) };
@@ -205,6 +226,10 @@ impl Aligner {
         (!self.events.is_empty()).then(|| self.events.remove(0))
     }
 
+    pub fn dropped(&mut self) -> Option<&'static str> {
+        (!self.drops.is_empty()).then(|| self.drops.remove(0))
+    }
+
     pub fn take(&mut self, now_ns: u64) -> (Vec<f32>, Vec<f32>) {
         for side in [&mut self.mic, &mut self.call] {
             if std::mem::take(&mut side.fresh) {
@@ -225,7 +250,11 @@ impl Aligner {
         self.call.pad_after_hold(mic_len, now_ns, "call", &mut self.events);
         let n = self.mic.buf.len().min(self.call.buf.len());
         self.emitted += n as u64;
-        (self.mic.buf.drain(..n).collect(), self.call.buf.drain(..n).collect())
+        let out = (self.mic.buf.drain(..n).collect(), self.call.buf.drain(..n).collect());
+        let cap = (MAX_BACKLOG_MS as f64 * self.rate / 1000.0) as usize;
+        self.mic.drop_backlog_over(cap, "mic", &mut self.drops);
+        self.call.drop_backlog_over(cap, "call", &mut self.drops);
+        out
     }
 
     pub fn finish(&mut self) -> (Vec<f32>, Vec<f32>) {
@@ -546,6 +575,41 @@ mod aligner_tests {
             }
         }
         assert_eq!(corrections_after_resume, 0, "offset {}", al.offset_ms());
+    }
+
+    #[test]
+    fn a_mac_that_sleeps_mid_meeting_does_not_fill_the_gap_with_hours_of_silence() {
+        let hour_ns = 3_600 * 1_000_000_000;
+        let mut al = Aligner::new(RATE);
+        let (mut pushed, mut emitted) = (0, 0);
+        for k in 0..80 {
+            let slept = if k >= 40 { hour_ns } else { 0 };
+            let t = 1_000_000_000 + k as u64 * DRAIN_NS + slept;
+            al.push_call(&ramp(k * DRAIN, DRAIN), Some(t));
+            pushed += DRAIN;
+            if k != 40 {
+                al.push_mic(&ramp(k * DRAIN + 1, DRAIN), Some(t));
+            }
+            emitted += al.take(t + DRAIN_NS).0.len();
+        }
+        let cap = (MAX_SHIFT_MS as f64 * RATE / 1000.0) as usize;
+        assert!(emitted < pushed + cap, "emitted {emitted} for {pushed} pushed");
+        assert!(emitted + 2 * DRAIN >= pushed, "emitted {emitted} for {pushed} pushed");
+    }
+
+    #[test]
+    fn a_side_running_slow_never_grows_its_backlog_past_three_seconds() {
+        let cap = (MAX_BACKLOG_MS as f64 * RATE / 1000.0) as usize;
+        let mut dropped = Vec::new();
+        let al = simulate(80, |_| DRAIN / 2, |k, al, _, _| {
+            let held = al.mic.buf.len().max(al.call.buf.len());
+            assert!(held <= cap, "holding {held} samples at take {k}");
+        });
+        let mut al = al;
+        while let Some(side) = al.dropped() {
+            dropped.push(side);
+        }
+        assert_eq!(dropped, vec!["call"]);
     }
 
     fn assert_dead_side_is_padded(mic_dies: bool) {
