@@ -58,21 +58,38 @@ struct Side {
     fresh: bool,
     heard_at: Option<u64>,
     padding: bool,
+    anchor: Option<(u64, i64)>,
+    pending: Option<(u64, i64)>,
 }
 
 impl Side {
-    fn push(&mut self, samples: &[f32], first_host_ns: Option<u64>) {
+    fn push(&mut self, samples: &[f32], first_host_ns: Option<u64>, rate: f64, out_index: i64) -> bool {
+        let mut reanchored = false;
         if let Some(t) = first_host_ns {
-            let mark = Some((t, self.count));
-            if self.first.is_none() {
-                self.first = mark;
+            let resumed_after_gap = self.last.or(self.first).is_some_and(|(lt, ln)| {
+                let due_ns = lt as f64 + (self.count - ln) as f64 * 1e9 / rate;
+                t as f64 - due_ns > (HOLD_MS * 1_000_000) as f64
+            });
+            // A dropout is not clock drift: restart the drift baseline and re-place the side on the timeline.
+            if self.first.is_none() || self.padding || resumed_after_gap {
+                self.first = Some((t, self.count));
+                self.last = None;
+                self.pending.get_or_insert((t, out_index));
+                self.padding = false;
+                reanchored = true;
             } else {
-                self.last = mark;
+                self.last = Some((t, self.count));
             }
+            self.anchor = Some((t, out_index));
         }
         self.buf.extend_from_slice(samples);
         self.count += samples.len() as u64;
         self.fresh = true;
+        reanchored
+    }
+
+    fn next_index(&self, emitted: u64) -> i64 {
+        emitted as i64 + self.buf.len() as i64 - self.skip as i64
     }
 
     fn span(&self) -> Option<(f64, f64)> {
@@ -96,7 +113,7 @@ pub struct Aligner {
     rate: f64,
     mic: Side,
     call: Side,
-    trimmed: bool,
+    emitted: u64,
     fixed: f64,
     correcting: bool,
     events: Vec<&'static str>,
@@ -108,7 +125,7 @@ impl Aligner {
             rate,
             mic: Side::default(),
             call: Side::default(),
-            trimmed: false,
+            emitted: 0,
             fixed: 0.0,
             correcting: false,
             events: Vec::new(),
@@ -116,11 +133,50 @@ impl Aligner {
     }
 
     pub fn push_call(&mut self, samples: &[f32], first_host_ns: Option<u64>) {
-        self.call.push(samples, first_host_ns);
+        let at = self.call.next_index(self.emitted);
+        self.call.push(samples, first_host_ns, self.rate, at);
     }
 
     pub fn push_mic(&mut self, samples: &[f32], first_host_ns: Option<u64>) {
-        self.mic.push(samples, first_host_ns);
+        let at = self.mic.next_index(self.emitted);
+        if self.mic.push(samples, first_host_ns, self.rate, at) {
+            self.fixed = 0.0;
+            self.correcting = false;
+        }
+    }
+
+    fn place_new_anchor(&mut self) {
+        let (mic_is_placed, (placed_t, placed_at), (ref_t, ref_at)) = match (self.mic.pending, self.call.pending) {
+            (None, None) => return,
+            (Some(m), Some(c)) if m.0 >= c.0 => (true, m, c),
+            (Some(m), Some(c)) => (false, c, m),
+            (Some(m), None) => match self.call.anchor {
+                Some(c) => (true, m, c),
+                None => return,
+            },
+            (None, Some(c)) => match self.mic.anchor {
+                Some(m) => (false, c, m),
+                None => return,
+            },
+        };
+        self.mic.pending = None;
+        self.call.pending = None;
+        let lead = ((placed_t as f64 - ref_t as f64) * self.rate / 1e9).round() as i64;
+        let shift = ref_at + lead - placed_at;
+        let emitted = self.emitted;
+        let (placed, reference) =
+            if mic_is_placed { (&mut self.mic, &mut self.call) } else { (&mut self.call, &mut self.mic) };
+        if emitted == 0 && shift > 0 {
+            reference.skip += shift as usize;
+            return;
+        }
+        let at = (placed_at - emitted as i64).clamp(0, placed.buf.len() as i64) as usize;
+        if shift > 0 {
+            placed.buf.splice(at..at, std::iter::repeat_n(0.0, shift as usize));
+        } else {
+            let end = (at + shift.unsigned_abs() as usize).min(placed.buf.len());
+            placed.buf.drain(at..end);
+        }
     }
 
     fn offset_samples(&self) -> f64 {
@@ -146,13 +202,7 @@ impl Aligner {
             }
             side.heard_at.get_or_insert(now_ns);
         }
-        if !self.trimmed
-            && let (Some((mic_t, _)), Some((call_t, _))) = (self.mic.first, self.call.first)
-        {
-            let lead = (mic_t.abs_diff(call_t) as f64 * self.rate / 1e9).round() as usize;
-            if mic_t < call_t { &mut self.mic } else { &mut self.call }.skip = lead;
-            self.trimmed = true;
-        }
+        self.place_new_anchor();
         for side in [&mut self.mic, &mut self.call] {
             let k = side.skip.min(side.buf.len());
             side.buf.drain(..k);
@@ -163,6 +213,7 @@ impl Aligner {
         self.mic.pad_after_hold(call_len, now_ns, "mic", &mut self.events);
         self.call.pad_after_hold(mic_len, now_ns, "call", &mut self.events);
         let n = self.mic.buf.len().min(self.call.buf.len());
+        self.emitted += n as u64;
         (self.mic.buf.drain(..n).collect(), self.call.buf.drain(..n).collect())
     }
 
@@ -232,16 +283,25 @@ mod tests {
         assert_same_tone(96_000.0);
     }
 
-    #[test]
-    fn chunked_input_resamples_the_same_as_one_push() {
-        let input = tone(44_100.0, 1_000.0, 1.0, 0.3);
-        let whole = Resampler::new(44_100.0, 48_000.0).push(&input);
-        let mut chunked_resampler = Resampler::new(44_100.0, 48_000.0);
+    fn assert_chunked_matches_whole(from: f64) {
+        let input = tone(from, 1_000.0, 1.0, 0.3);
+        let whole = Resampler::new(from, 48_000.0).push(&input);
+        let mut chunked_resampler = Resampler::new(from, 48_000.0);
         let chunked: Vec<f32> = input.chunks(441).flat_map(|c| chunked_resampler.push(c)).collect();
         assert_eq!(chunked.len(), whole.len());
         for (a, b) in chunked.iter().zip(&whole) {
             assert!((a - b).abs() <= 1e-6, "{a} vs {b}");
         }
+    }
+
+    #[test]
+    fn chunked_input_resamples_the_same_as_one_push() {
+        assert_chunked_matches_whole(44_100.0);
+    }
+
+    #[test]
+    fn chunked_downsampling_carries_the_filter_across_pushes() {
+        assert_chunked_matches_whole(96_000.0);
     }
 
     #[test]
@@ -259,24 +319,53 @@ mod aligner_tests {
     const DRAIN: usize = 12_000;
     const DRAIN_NS: u64 = 250_000_000;
 
+    const RAMP_WRAP: usize = 1 << 24;
+
     fn ramp(from: usize, len: usize) -> Vec<f32> {
-        (from..from + len).map(|i| i as f32).collect()
+        (from..from + len).map(|i| (i % RAMP_WRAP) as f32).collect()
     }
 
-    fn run_drift(ppm: f64, takes: usize, mut each: impl FnMut(&Aligner, &[f32])) -> Aligner {
+    fn simulate(
+        takes: usize,
+        mut mic_due: impl FnMut(usize) -> usize,
+        mut each: impl FnMut(usize, &Aligner, &[f32], &[f32]),
+    ) -> Aligner {
         let mut al = Aligner::new(RATE);
         let mut mic_sent = 0;
         for k in 0..takes {
             let t = 1_000_000_000 + k as u64 * DRAIN_NS;
-            let mic_due = ((k + 1) as f64 * DRAIN as f64 * (1.0 + ppm * 1e-6)).round() as usize;
-            al.push_call(&vec![0.0; DRAIN], Some(t));
-            al.push_mic(&ramp(mic_sent, mic_due - mic_sent), Some(t));
-            mic_sent = mic_due;
+            al.push_call(&ramp(k * DRAIN, DRAIN), Some(t));
+            let n = mic_due(k);
+            if n > 0 {
+                al.push_mic(&ramp(mic_sent + 1, n), Some(t));
+                mic_sent += n;
+            }
             let (mine, theirs) = al.take(t + DRAIN_NS);
             assert_eq!(mine.len(), theirs.len());
-            each(&al, &mine);
+            each(k, &al, &mine, &theirs);
         }
         al
+    }
+
+    fn clock(ppm: f64, extra_at_start: usize) -> impl FnMut(usize) -> usize {
+        let mut sent = 0;
+        move |k| {
+            let due = ((k + 1) as f64 * DRAIN as f64 * (1.0 + ppm * 1e-6)).round() as usize + extra_at_start;
+            let n = due - sent;
+            sent = due;
+            n
+        }
+    }
+
+    fn mic_changes(prev: &mut Option<f32>, mine: &[f32]) -> Vec<(usize, f32)> {
+        let mut seq: Vec<f32> = prev.iter().copied().collect();
+        seq.extend(mine.iter().copied().filter(|s| *s > 0.0));
+        *prev = seq.last().copied();
+        seq.windows(2)
+            .enumerate()
+            .filter(|(_, w)| w[1] - w[0] != 1.0)
+            .map(|(i, w)| (i, w[1] - w[0]))
+            .collect()
     }
 
     #[test]
@@ -311,35 +400,111 @@ mod aligner_tests {
 
     #[test]
     fn a_mic_running_100ppm_fast_stays_within_10ms_over_an_hour() {
-        run_drift(100.0, 14_400, |al, _| {
+        let ppm = 100e-6;
+        // The estimate trails by a drain and correction starts the take after it crosses.
+        let ten_ms = DRIFT_START_MS as f64 * RATE / 1000.0 + 2.0 * DRAIN as f64 * ppm;
+        let mut call_index = 0;
+        simulate(14_400, clock(100.0, 0), |_, al, mine, theirs| {
             assert!(al.offset_ms().abs() <= DRIFT_START_MS, "offset {}", al.offset_ms());
+            for j in [0, mine.len().saturating_sub(1)].into_iter().filter(|_| !mine.is_empty()) {
+                assert_eq!(theirs[j] as usize, (call_index + j) % RAMP_WRAP);
+                let expected_mic = (call_index + j) as f64 * (1.0 + ppm) + 1.0;
+                let wrap = RAMP_WRAP as f64;
+                let late = (mine[j] as f64 - expected_mic + wrap / 2.0).rem_euclid(wrap) - wrap / 2.0;
+                assert!(late.abs() <= ten_ms, "mic {late} samples off at call index {}", call_index + j);
+            }
+            call_index += mine.len();
         });
     }
 
     #[test]
     fn drift_moves_at_most_four_spaced_mic_samples_per_take() {
         for (ppm, changed_step) in [(10_000.0, 2.0), (-10_000.0, 0.0)] {
-            let mut prev: Option<f32> = None;
+            let mut prev = None;
             let mut corrected_takes = 0;
-            run_drift(ppm, 40, |_, mine| {
-                let mut seq: Vec<f32> = prev.into_iter().collect();
-                seq.extend_from_slice(mine);
-                let changed: Vec<usize> = seq
-                    .windows(2)
-                    .enumerate()
-                    .filter(|(_, w)| w[1] - w[0] != 1.0)
-                    .map(|(i, w)| {
-                        assert_eq!(w[1] - w[0], changed_step, "only single drops or repeats");
-                        i
-                    })
-                    .collect();
+            simulate(40, clock(ppm, 0), |_, _, mine, _| {
+                let changed = mic_changes(&mut prev, mine);
+                assert!(changed.iter().all(|(_, step)| *step == changed_step), "{changed:?}");
                 assert!(changed.len() <= MAX_FIX_PER_TAKE, "{} changes", changed.len());
-                assert!(changed.windows(2).all(|p| p[1] - p[0] > 1), "adjacent changes {changed:?}");
+                assert!(changed.windows(2).all(|p| p[1].0 - p[0].0 > 1), "adjacent changes {changed:?}");
                 corrected_takes += !changed.is_empty() as usize;
-                prev = mine.last().copied().or(prev);
             });
             assert!(corrected_takes > 0, "{ppm} ppm never corrected");
         }
+    }
+
+    #[test]
+    fn drift_correction_stays_off_between_2_and_10_ms() {
+        let six_ms = (6.0 * RATE / 1000.0) as usize;
+        let mut prev = None;
+        let al = simulate(400, clock(0.0, six_ms), |_, _, mine, _| {
+            assert_eq!(mic_changes(&mut prev, mine), vec![]);
+        });
+        assert!((al.offset_ms() - 6.0).abs() < 0.1, "offset {}", al.offset_ms());
+    }
+
+    #[test]
+    fn drift_correction_stops_once_under_2_ms() {
+        let twelve_ms = (12.0 * RATE / 1000.0) as usize;
+        let mut prev = None;
+        let mut corrections = 0;
+        let al = simulate(400, clock(0.0, twelve_ms), |k, _, mine, _| {
+            let changed = mic_changes(&mut prev, mine).len();
+            corrections += changed;
+            if k >= 200 {
+                assert_eq!(changed, 0, "still correcting at take {k}");
+            }
+        });
+        assert!(corrections > 0);
+        assert!(
+            (DRIFT_STOP_MS - 0.1..DRIFT_STOP_MS).contains(&al.offset_ms()),
+            "offset {}",
+            al.offset_ms()
+        );
+    }
+
+    #[test]
+    fn a_mic_that_drops_out_and_resumes_is_not_treated_as_drifting() {
+        let gap = 40..48;
+        let gap_samples = (gap.len() * DRAIN) as f64;
+        let ten_ms = DRIFT_START_MS as f64 * RATE / 1000.0;
+        let mut prev = None;
+        let mut heard_after = 0;
+        simulate(
+            128,
+            |k| if gap.contains(&k) { 0 } else { DRAIN },
+            |k, _, mine, theirs| {
+                let changed = mic_changes(&mut prev, mine);
+                if k < gap.end {
+                    return;
+                }
+                assert_eq!(changed, vec![], "take {k}");
+                for (m, t) in mine.iter().zip(theirs).filter(|(m, _)| **m > 0.0) {
+                    heard_after += 1;
+                    assert!((*m as f64 - 1.0 + gap_samples - *t as f64).abs() <= ten_ms, "{m} vs {t}");
+                }
+            },
+        );
+        assert!(heard_after > 0);
+    }
+
+    #[test]
+    fn a_mic_that_starts_two_seconds_late_does_not_cut_call_audio() {
+        let late = 8;
+        let (mut mine_all, mut theirs_all) = (Vec::new(), Vec::new());
+        simulate(
+            40,
+            |k| if k < late { 0 } else { DRAIN },
+            |_, _, mine, theirs| {
+                mine_all.extend_from_slice(mine);
+                theirs_all.extend_from_slice(theirs);
+            },
+        );
+        assert!(theirs_all.len() >= 39 * DRAIN, "theirs stalled at {}", theirs_all.len());
+        assert_eq!(theirs_all, ramp(0, theirs_all.len()));
+        let first_mic = mine_all.iter().position(|s| *s == 1.0).expect("mic never heard");
+        let lined_up_with = theirs_all[first_mic] as f64;
+        assert!((lined_up_with - 2.0 * RATE).abs() <= RATE / 100.0, "lined up with {lined_up_with}");
     }
 
     fn assert_dead_side_is_padded(mic_dies: bool) {
