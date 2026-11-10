@@ -353,12 +353,16 @@ fn run(cap: SystemCapture, mut mic: Option<MicStream>, dir: PathBuf, live: Arc<M
                     resampler = Some(Resampler::new(m.rate(), rate));
                     mic = Some(m);
                     mic_failed = false;
+                    aligner.mic_restarted();
+                    if let Ok(mut l) = live.lock() {
+                        clear_mic_stopped(&mut l.warning);
+                    }
                 }
                 Err(e) if !mic_failed => {
                     mic_failed = true;
                     log(&dir, &format!("mic stopped: {} · reopening failed: {e}", failure.unwrap_or_default()));
                     if let Ok(mut l) = live.lock() {
-                        l.warning = Some("Your microphone stopped".into());
+                        l.warning = Some(MIC_STOPPED.into());
                     }
                 }
                 Err(_) => {}
@@ -401,6 +405,14 @@ fn should_reopen(failed: bool, last_try: Option<std::time::Instant>, now: std::t
 
 fn call_rate_changed(cutter_rate: f64, now_rate: f64) -> bool {
     now_rate > 0.0 && (now_rate - cutter_rate).abs() >= 1.0
+}
+
+const MIC_STOPPED: &str = "Your microphone stopped";
+
+fn clear_mic_stopped(warning: &mut Option<String>) {
+    if warning.as_deref() == Some(MIC_STOPPED) {
+        *warning = None;
+    }
 }
 
 fn heard_you(mic: &[f32]) -> bool {
@@ -913,6 +925,16 @@ mod tests {
         assert!(!call_rate_changed(48_000.0, 48_000.0));
         assert!(!call_rate_changed(48_000.0, 48_000.4));
         assert!(!call_rate_changed(48_000.0, 0.0));
+    }
+
+    #[test]
+    fn a_reopened_mic_clears_only_the_mic_stopped_warning() {
+        let mut w = Some(MIC_STOPPED.to_string());
+        clear_mic_stopped(&mut w);
+        assert_eq!(w, None);
+        let mut w = Some("No audio reached the recorder.".to_string());
+        clear_mic_stopped(&mut w);
+        assert_eq!(w.as_deref(), Some("No audio reached the recorder."));
     }
 
     #[test]

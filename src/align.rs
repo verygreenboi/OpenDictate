@@ -191,15 +191,15 @@ impl Aligner {
         self.call.pending = None;
         let lead = ((placed_t as f64 - ref_t as f64) * self.rate / 1e9).round() as i64;
         let shift = ref_at + lead - placed_at;
-        // Only a stale anchor is this far out, after a sleep: start both sides afresh here instead of filling the gap.
-        if shift.unsigned_abs() as f64 > MAX_SHIFT_MS as f64 * self.rate / 1000.0 {
-            return;
-        }
         let emitted = self.emitted;
         let (placed, reference) =
             if mic_is_placed { (&mut self.mic, &mut self.call) } else { (&mut self.call, &mut self.mic) };
         if emitted == 0 && shift > 0 {
             reference.skip += shift as usize;
+            return;
+        }
+        // Only a stale anchor is this far out, after a sleep: start both sides afresh here instead of filling the gap.
+        if shift.unsigned_abs() as f64 > MAX_SHIFT_MS as f64 * self.rate / 1000.0 {
             return;
         }
         let at = (placed_at - emitted as i64).clamp(0, placed.buf.len() as i64) as usize;
@@ -224,6 +224,11 @@ impl Aligner {
 
     pub fn padded(&mut self) -> Option<&'static str> {
         (!self.events.is_empty()).then(|| self.events.remove(0))
+    }
+
+    pub fn mic_restarted(&mut self) {
+        self.mic.first = None;
+        self.mic.last = None;
     }
 
     pub fn dropped(&mut self) -> Option<&'static str> {
@@ -595,6 +600,41 @@ mod aligner_tests {
         let cap = (MAX_SHIFT_MS as f64 * RATE / 1000.0) as usize;
         assert!(emitted < pushed + cap, "emitted {emitted} for {pushed} pushed");
         assert!(emitted + 2 * DRAIN >= pushed, "emitted {emitted} for {pushed} pushed");
+    }
+
+    #[test]
+    fn a_mic_reopened_within_the_hold_is_placed_against_the_call_again() {
+        let mut al = Aligner::new(RATE);
+        let mut lined_up = None;
+        let mut call_index = 0;
+        for k in 0..60 {
+            let t = 1_000_000_000 + k as u64 * DRAIN_NS;
+            al.push_call(&ramp(k * DRAIN, DRAIN), Some(t));
+            if k == 41 {
+                al.mic_restarted();
+            }
+            if k != 40 {
+                al.push_mic(&ramp(k * DRAIN + 1, DRAIN), Some(t));
+            }
+            let (mine, theirs) = al.take(t + DRAIN_NS);
+            if let Some(j) = mine.iter().position(|s| *s == (41 * DRAIN + 1) as f32) {
+                lined_up = Some(call_index + j);
+                assert_eq!(theirs[j] as usize, call_index + j);
+            }
+            call_index += theirs.len();
+        }
+        assert_eq!(lined_up, Some(41 * DRAIN));
+    }
+
+    #[test]
+    fn a_call_that_starts_more_than_five_seconds_after_the_mic_still_lines_up() {
+        let mut al = Aligner::new(RATE);
+        let mic = ramp(0, 7 * RATE as usize);
+        al.push_mic(&mic, Some(1_000_000_000));
+        al.push_call(&ramp(10_000_000, DRAIN), Some(7_500_000_000));
+        let (mine, theirs) = al.take(7_750_000_000);
+        assert_eq!(theirs[0], 10_000_000.0);
+        assert_eq!(mine[0], mic[(6.5 * RATE) as usize]);
     }
 
     #[test]
