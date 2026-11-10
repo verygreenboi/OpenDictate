@@ -127,6 +127,7 @@ pub struct DictateApp {
     quitting: bool,
     /// The meeting being recorded, if any.
     pub meeting: Option<crate::meeting::Session>,
+    talking_view: Option<crate::talking_view::ViewState>,
     /// Which stored meeting the Meetings page is showing, and its summary
     /// if one has been made - read once when it opens rather than off disk
     /// on every frame.
@@ -237,6 +238,7 @@ impl DictateApp {
             focus_main: false,
             quitting: false,
             meeting: None,
+            talking_view: None,
             open_meeting: None,
             open_summary: None,
             open_meta: None,
@@ -451,6 +453,7 @@ impl DictateApp {
             Ok(session) => {
                 self.notify(format!("Recording: {}", session.source.to_lowercase()), false);
                 self.meeting = Some(session);
+                self.talking_view = Some(Default::default());
             }
             Err(e) => self.notify(e, true),
         }
@@ -1034,6 +1037,31 @@ impl DictateApp {
         });
     }
 
+    fn talking_window(&mut self, ctx: &egui::Context) {
+        let Some(session) = &self.meeting else { return };
+        let (Some(talking), Some(vs)) = (&session.talking, self.talking_view.as_mut()) else { return };
+        let builder = egui::ViewportBuilder::default()
+            .with_title("Talking Points")
+            .with_inner_size([640.0, 460.0])
+            .with_min_inner_size([480.0, 320.0])
+            .with_window_level(egui::WindowLevel::AlwaysOnTop);
+        let mut closed = false;
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("talking"), builder, |ui, _| {
+            closed = ui.input(|i| i.viewport().close_requested());
+            let (Ok(meeting), Ok(mut t)) = (session.live.lock(), talking.lock()) else { return };
+            match crate::talking_view::draw(ui, &meeting, &t, vs) {
+                Some(crate::talking_view::ViewAction::Copy(text)) => ui.ctx().copy_text(text),
+                Some(crate::talking_view::ViewAction::RemoveChip(i)) if i < t.chips.len() => {
+                    t.chips.remove(i);
+                }
+                _ => {}
+            }
+        });
+        if closed {
+            self.talking_view = None;
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Screenshot mode
 
@@ -1141,6 +1169,7 @@ impl eframe::App for DictateApp {
             self.main_window(&ctx);
         }
         self.indicator(&ctx);
+        self.talking_window(&ctx);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

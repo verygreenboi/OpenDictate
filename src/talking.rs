@@ -457,7 +457,6 @@ pub struct Live {
     pub status: Option<String>,
     #[serde(skip)]
     pub updated_ms: Option<u64>,
-    #[allow(dead_code)]
     #[serde(skip)]
     pub availability: Option<Availability>,
     #[serde(skip)]
