@@ -560,8 +560,16 @@ pub fn start_ollama() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-pub fn chat_json(s: &Settings, model_override: Option<&str>, system: &str, user: &str, name: &str, schema: &Value) -> Result<String, String> {
-    chat_json_with(s, model_override, system, user, name, schema, ureq::Proxy::try_from_env())
+pub fn chat_json(
+    s: &Settings,
+    model_override: Option<&str>,
+    system: &str,
+    user: &str,
+    name: &str,
+    schema: &Value,
+    still_allowed: &dyn Fn() -> bool,
+) -> Result<String, String> {
+    chat_json_with(s, model_override, system, user, name, schema, still_allowed, ureq::Proxy::try_from_env())
 }
 
 fn chat_json_with(
@@ -571,6 +579,7 @@ fn chat_json_with(
     user: &str,
     name: &str,
     schema: &Value,
+    still_allowed: &dyn Fn() -> bool,
     env_proxy: Option<ureq::Proxy>,
 ) -> Result<String, String> {
     let (url, key, _, mut body) = chat_request(s, model_override, system, &[], user)?;
@@ -590,7 +599,7 @@ fn chat_json_with(
     };
     body["response_format"] = json!({"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": true}});
     let mut resp = send(&body)?;
-    if matches!(resp.status().as_u16(), 400 | 422) {
+    if matches!(resp.status().as_u16(), 400 | 422) && still_allowed() {
         if let Some(o) = body.as_object_mut() {
             o.remove("response_format");
         }
@@ -660,7 +669,7 @@ mod tests {
             completion(r#"{"summary":"s","actions":[]}"#),
         ]);
         let schema = json!({"type":"object"});
-        let out = chat_json_with(&local_text(port), None, "sys", "user", "notes", &schema, None);
+        let out = chat_json_with(&local_text(port), None, "sys", "user", "notes", &schema, &|| true, None);
         assert_eq!(out.unwrap(), r#"{"summary":"s","actions":[]}"#);
         let first = body_of(&requests.recv().unwrap());
         assert_eq!(first["response_format"]["type"], "json_schema");
@@ -676,11 +685,20 @@ mod tests {
     fn chat_json_resends_without_the_schema_only_when_the_server_rejects_the_request_shape() {
         for (status, resent) in [("400 Bad Request", true), ("422 Unprocessable Entity", true), ("401 Unauthorized", false), ("403 Forbidden", false), ("404 Not Found", false), ("429 Too Many Requests", false)] {
             let (port, requests) = fake_server(vec![http_reply(status, "", "{}"), completion("{}")]);
-            let out = chat_json_with(&local_text(port), None, "sys", "the meeting transcript", "notes", &json!({}), None);
+            let out = chat_json_with(&local_text(port), None, "sys", "the meeting transcript", "notes", &json!({}), &|| true, None);
             assert!(requests.recv_timeout(Duration::from_secs(1)).is_ok());
             let second = requests.recv_timeout(Duration::from_millis(300)).is_ok();
             assert_eq!((second, out.is_ok()), (resent, resent), "{status}");
         }
+    }
+
+    #[test]
+    fn chat_json_does_not_resend_once_consent_is_withdrawn() {
+        let (port, requests) = fake_server(vec![http_reply("400 Bad Request", "", "{}"), completion("{}")]);
+        let out = chat_json_with(&local_text(port), None, "sys", "the meeting transcript", "notes", &json!({}), &|| false, None);
+        assert!(out.is_err());
+        assert!(requests.recv_timeout(Duration::from_secs(1)).is_ok());
+        assert!(requests.recv_timeout(Duration::from_millis(300)).is_err(), "the transcript was sent again");
     }
 
     #[test]
@@ -689,7 +707,7 @@ mod tests {
             let (other, reached_other) = fake_server(vec![completion("{}")]);
             let location = format!("Location: http://127.0.0.1:{other}/v1/chat/completions\r\n");
             let (port, requests) = fake_server(vec![http_reply(status, &location, "")]);
-            let out = chat_json_with(&local_text(port), None, "sys", "the meeting transcript", "notes", &json!({}), None);
+            let out = chat_json_with(&local_text(port), None, "sys", "the meeting transcript", "notes", &json!({}), &|| true, None);
             assert!(out.is_err(), "{status}: {out:?}");
             assert!(requests.recv_timeout(Duration::from_secs(1)).is_ok());
             assert!(reached_other.recv_timeout(Duration::from_millis(500)).is_err(), "{status}: a request followed the redirect");
@@ -701,7 +719,7 @@ mod tests {
         let (proxy_port, reached_proxy) = fake_server(vec![http_reply("502 Bad Gateway", "", "")]);
         let (port, requests) = fake_server(vec![completion("{}")]);
         let proxy = ureq::Proxy::new(&format!("http://127.0.0.1:{proxy_port}")).unwrap();
-        let out = chat_json_with(&local_text(port), None, "sys", "user", "notes", &json!({}), Some(proxy));
+        let out = chat_json_with(&local_text(port), None, "sys", "user", "notes", &json!({}), &|| true, Some(proxy));
         assert_eq!(out.unwrap(), "{}");
         assert!(requests.recv_timeout(Duration::from_secs(1)).is_ok());
         assert!(reached_proxy.recv_timeout(Duration::from_millis(200)).is_err());
@@ -719,10 +737,10 @@ mod tests {
         let user = "Recent transcript:\n[them] Can you send me the beta build by Friday?\n[you] Sure, I'll send it Thursday.\n";
         for (name, system, schema) in [
             ("suggestions", crate::talking::SUGGEST_SYSTEM, crate::talking::suggestions_schema()),
-            ("notes", crate::talking::NOTES_SYSTEM, crate::talking::notes_schema()),
+            ("notes", crate::talking::NOTES_SYSTEM, crate::talking::notes_schema(true)),
         ] {
             let began = Instant::now();
-            let out = chat_json(&s, None, system, user, name, &schema);
+            let out = chat_json(&s, None, system, user, name, &schema, &|| true);
             println!("{name}: {:?} -> {out:?}", began.elapsed());
             assert!(out.is_ok());
         }

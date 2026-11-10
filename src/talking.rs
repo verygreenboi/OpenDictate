@@ -1,7 +1,8 @@
 use crate::meeting::Segment;
 use crate::settings::{Settings, TextEngine};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -61,7 +62,8 @@ const MIN_MEMORY: u64 = 16 * 1024 * 1024 * 1024;
 const NOTES_INTERVAL_MS: u64 = 30_000;
 const UNREACHABLE: &str = "Can't reach the text model. Check it in Models.";
 const UNREADABLE: &str = "The model's answer couldn't be read.";
-const RECHECK_MS: u128 = 2_000;
+const NOTES_STARVED_MS: u64 = 60_000;
+const FINAL_WINDOW: Duration = Duration::from_secs(30);
 
 macro_rules! data_rule {
     () => {
@@ -98,12 +100,14 @@ Keep earlier action points; add only commitments someone actually made or was as
 pub fn suggestions_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
+        "additionalProperties": false,
         "properties": {
             "reason": { "type": "string" },
             "items": {
                 "type": "array",
                 "items": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "kind": { "type": "string", "enum": ["reply", "ask"] },
                         "text": { "type": "string" }
@@ -116,9 +120,14 @@ pub fn suggestions_schema() -> serde_json::Value {
     })
 }
 
-pub fn notes_schema() -> serde_json::Value {
+pub fn notes_schema(local: bool) -> serde_json::Value {
+    let mut what = serde_json::json!({ "type": "string" });
+    if local {
+        what["minLength"] = 12.into();
+    }
     serde_json::json!({
         "type": "object",
+        "additionalProperties": false,
         "properties": {
             "summary": { "type": "string" },
             "decisions": { "type": "array", "items": { "type": "string" } },
@@ -126,9 +135,10 @@ pub fn notes_schema() -> serde_json::Value {
                 "type": "array",
                 "items": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                         "who": { "type": "string" },
-                        "what": { "type": "string", "minLength": 12 }
+                        "what": what
                     },
                     "required": ["who", "what"]
                 }
@@ -371,6 +381,7 @@ pub struct Scheduler {
     suggest_due: bool,
     notes_due: bool,
     last_notes_ms: u64,
+    notes_due_since: Option<u64>,
 }
 
 impl Scheduler {
@@ -387,12 +398,18 @@ impl Scheduler {
         if self.running.is_some() {
             return None;
         }
-        let job = if self.suggest_due {
+        let notes_ready = self.notes_due && now_ms.saturating_sub(self.last_notes_ms) >= NOTES_INTERVAL_MS;
+        if !notes_ready {
+            self.notes_due_since = None;
+        }
+        let starved = notes_ready && now_ms.saturating_sub(*self.notes_due_since.get_or_insert(now_ms)) >= NOTES_STARVED_MS;
+        let job = if notes_ready && (starved || !self.suggest_due) {
+            self.notes_due = false;
+            self.notes_due_since = None;
+            Job::Notes
+        } else if self.suggest_due {
             self.suggest_due = false;
             Job::Suggest
-        } else if self.notes_due && now_ms.saturating_sub(self.last_notes_ms) >= NOTES_INTERVAL_MS {
-            self.notes_due = false;
-            Job::Notes
         } else {
             return None;
         };
@@ -425,98 +442,166 @@ pub struct Live {
     pub was_ready: bool,
 }
 
-pub fn step(live: &Mutex<Live>, sched: &mut Scheduler, segments: &[Segment], now_ms: u64, chat: &dyn Fn(Job, &str, &str) -> Result<String, String>, log: &dyn Fn(&str)) {
-    let Some(job) = sched.next(now_ms) else { return };
+pub fn step(live: &Mutex<Live>, job: Job, segments: &[Segment], now_ms: u64, chat: &dyn Fn(Job, &str, &str) -> Result<String, String>, log: &dyn Fn(&str)) {
     let user = match live.lock() {
         Ok(l) => bundle(&l.chips, &l.summary, &l.actions, segments, now_ms),
-        Err(_) => return sched.done(job, now_ms),
+        Err(_) => return,
     };
     let system = if job == Job::Suggest { SUGGEST_SYSTEM } else { NOTES_SYSTEM };
     let reply = chat(job, system, &user);
-    sched.done(job, now_ms);
-    let Ok(mut l) = live.lock() else { return };
-    let unreadable = |raw: &str| {
-        log(&format!("    talking points: unreadable reply: {}", raw.chars().take(200).collect::<String>().replace(['\n', '\r'], " ")));
-        UNREADABLE.to_string()
-    };
-    let outcome = match (job, reply) {
-        (_, Err(_)) => Err(UNREACHABLE.to_string()),
-        (Job::Suggest, Ok(raw)) => parse_suggestions(&raw).map_err(|_| unreadable(&raw)).map(|sug| {
-            if !sug.items.is_empty() {
-                l.suggestions = Some(sug);
+    let mut unreadable = None;
+    if let Ok(mut l) = live.lock() {
+        let outcome = match (job, reply) {
+            (_, Err(_)) => Err(UNREACHABLE),
+            (Job::Suggest, Ok(raw)) => match parse_suggestions(&raw) {
+                Ok(sug) => {
+                    if !sug.items.is_empty() {
+                        l.suggestions = Some(sug);
+                    }
+                    Ok(())
+                }
+                Err(_) => {
+                    unreadable = Some(raw);
+                    Err(UNREADABLE)
+                }
+            },
+            (Job::Notes, Ok(raw)) => match parse_notes(&raw) {
+                Ok(notes) => {
+                    if !notes.summary.is_empty() {
+                        l.summary = notes.summary;
+                    }
+                    merge_actions(&mut l.actions, notes.actions);
+                    Ok(())
+                }
+                Err(_) => {
+                    unreadable = Some(raw);
+                    Err(UNREADABLE)
+                }
+            },
+        };
+        match outcome {
+            Ok(()) => {
+                l.status = None;
+                l.updated_ms = Some(now_ms);
             }
-        }),
-        (Job::Notes, Ok(raw)) => parse_notes(&raw).map_err(|_| unreadable(&raw)).map(|notes| {
-            if !notes.summary.is_empty() {
-                l.summary = notes.summary;
-            }
-            merge_actions(&mut l.actions, notes.actions);
-        }),
-    };
-    match outcome {
-        Ok(()) => {
-            l.status = None;
-            l.updated_ms = Some(now_ms);
+            Err(e) => l.status = Some(e.to_string()),
         }
-        Err(e) => l.status = Some(e),
+    }
+    if let Some(raw) = unreadable {
+        log(&format!("    talking points: unreadable reply: {}", raw.chars().take(200).collect::<String>().replace(['\n', '\r'], " ")));
     }
 }
 
-pub fn spawn(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>, dir: std::path::PathBuf) -> Arc<Mutex<Live>> {
-    start(s, physical_memory(), meeting, stop, crate::settings::load_settings, json_chat, move |line: &str| crate::meeting::log(&dir, line))
+pub fn spawn(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, ended: Arc<AtomicBool>, dir: PathBuf) -> Arc<Mutex<Live>> {
+    let log_dir = dir.clone();
+    let worker = Worker {
+        dir,
+        final_window: FINAL_WINDOW,
+        current: Arc::new(crate::settings::load_settings),
+        chat: Arc::new(json_chat),
+        log: Box::new(move |line: &str| crate::meeting::log(&log_dir, line)),
+    };
+    start(s, physical_memory(), meeting, ended, worker)
 }
 
-fn json_chat(s: &Settings, job: Job, system: &str, user: &str) -> Result<String, String> {
+fn json_chat(s: &Settings, job: Job, system: &str, user: &str, still_allowed: &dyn Fn() -> bool) -> Result<String, String> {
     let model = Some(s.meeting_model.trim()).filter(|m| !m.is_empty());
+    let local = text_server(s).is_some_and(is_local);
     match job {
-        Job::Suggest => crate::engines::chat_json(s, model, system, user, "suggestions", &suggestions_schema()),
-        Job::Notes => crate::engines::chat_json(s, model, system, user, "notes", &notes_schema()),
+        Job::Suggest => crate::engines::chat_json(s, model, system, user, "suggestions", &suggestions_schema(), still_allowed),
+        Job::Notes => crate::engines::chat_json(s, model, system, user, "notes", &notes_schema(local), still_allowed),
     }
 }
 
-fn start(
-    s: Settings,
-    memory: u64,
-    meeting: Arc<Mutex<crate::meeting::Live>>,
-    stop: Arc<AtomicBool>,
-    current: impl Fn() -> Settings + Send + 'static,
-    chat: impl Fn(&Settings, Job, &str, &str) -> Result<String, String> + Send + 'static,
-    log: impl Fn(&str) + Send + 'static,
-) -> Arc<Mutex<Live>> {
+type ChatFn = dyn Fn(&Settings, Job, &str, &str, &dyn Fn() -> bool) -> Result<String, String> + Send + Sync;
+
+struct Worker {
+    dir: PathBuf,
+    final_window: Duration,
+    current: Arc<dyn Fn() -> Settings + Send + Sync>,
+    chat: Arc<ChatFn>,
+    log: Box<dyn Fn(&str) + Send>,
+}
+
+fn start(s: Settings, memory: u64, meeting: Arc<Mutex<crate::meeting::Live>>, ended: Arc<AtomicBool>, w: Worker) -> Arc<Mutex<Live>> {
     let gate = availability(&s, memory);
     let ready = gate == Availability::Ready;
     let live = Arc::new(Mutex::new(Live { availability: Some(gate), was_ready: ready, ..Live::default() }));
-    if ready {
+    std::thread::spawn({
         let live = live.clone();
-        std::thread::spawn(move || {
-            let mut s = s;
-            let mut checked = std::time::Instant::now();
-            let mut sched = Scheduler::new();
-            let mut seen = 0;
-            while !stop.load(Ordering::Relaxed) {
-                if checked.elapsed().as_millis() >= RECHECK_MS {
-                    checked = std::time::Instant::now();
-                    s = current();
-                    let gate = availability(&s, memory);
-                    if gate != Availability::Ready {
-                        if let Ok(mut l) = live.lock() {
-                            l.availability = Some(gate);
-                        }
-                        return;
-                    }
-                }
-                let chat = |job: Job, system: &str, user: &str| chat(&s, job, system, user);
-                let Ok((segments, now_ms)) = meeting.lock().map(|m| (m.segments.clone(), (m.elapsed * 1000.0) as u64)) else { return };
-                for _ in seen..segments.len() {
-                    sched.on_segment();
-                }
-                seen = segments.len();
-                step(&live, &mut sched, &segments, now_ms, &chat, &log);
-                std::thread::sleep(std::time::Duration::from_millis(200));
+        move || work(memory, &meeting, &ended, &w, &live)
+    });
+    live
+}
+
+fn ms(elapsed_secs: f32) -> u64 {
+    (elapsed_secs * 1000.0) as u64
+}
+
+fn work(memory: u64, meeting: &Mutex<crate::meeting::Live>, ended: &AtomicBool, w: &Worker, live: &Mutex<Live>) {
+    let ended_at = std::cell::Cell::new(None::<std::time::Instant>);
+    let out_of_time = || {
+        if !ended.load(Ordering::Relaxed) {
+            return false;
+        }
+        let at = ended_at.get().unwrap_or_else(std::time::Instant::now);
+        ended_at.set(Some(at));
+        at.elapsed() >= w.final_window
+    };
+    let consent = || {
+        let s = (w.current)();
+        let gate = availability(&s, memory);
+        let ready = gate == Availability::Ready;
+        if let Ok(mut l) = live.lock() {
+            l.availability = Some(gate);
+            l.was_ready |= ready;
+        }
+        ready.then_some(s)
+    };
+    let ask = |s: &Settings, job: Job, system: &str, user: &str| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn({
+            let (chat, current, s, system, user) = (w.chat.clone(), w.current.clone(), s.clone(), system.to_owned(), user.to_owned());
+            move || {
+                let still_allowed = || {
+                    let now = current();
+                    availability(&now, memory) == Availability::Ready && text_server(&now) == text_server(&s)
+                };
+                let _ = tx.send(chat(&s, job, &system, &user, &still_allowed));
             }
         });
+        loop {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(reply) => return reply,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if !out_of_time() => {}
+                Err(_) => return Err("abandoned at the end of the meeting".to_string()),
+            }
+        }
+    };
+    let segments = || meeting.lock().map(|m| m.segments.clone()).unwrap_or_default();
+    let mut sched = Scheduler::new();
+    let mut seen = 0;
+    while !ended.load(Ordering::Relaxed) {
+        std::thread::sleep(Duration::from_millis(200));
+        let Ok((count, now_ms)) = meeting.lock().map(|m| (m.segments.len(), ms(m.elapsed))) else { break };
+        for _ in seen..count {
+            sched.on_segment();
+        }
+        seen = count;
+        let Some(s) = consent() else { continue };
+        let Some(job) = sched.next(now_ms) else { continue };
+        step(live, job, &segments(), now_ms, &|job, system, user| ask(&s, job, system, user), &*w.log);
+        sched.done(job, now_ms);
     }
-    live
+    if !out_of_time() {
+        if let Some(s) = consent() {
+            let now_ms = meeting.lock().map(|m| ms(m.elapsed)).unwrap_or(0);
+            step(live, Job::Notes, &segments(), now_ms, &|job, system, user| ask(&s, job, system, user), &*w.log);
+        }
+    }
+    if let Ok(l) = live.lock() {
+        save(&w.dir, &l);
+    }
 }
 
 pub fn save(dir: &Path, live: &Live) {
@@ -551,10 +636,9 @@ mod tests {
     }
 
     fn run_step_logged(live: &Mutex<Live>, job: Job, reply: Result<&str, &str>, log: &dyn Fn(&str)) -> Vec<(Job, String, String)> {
-        let mut sched = if job == Job::Suggest { suggesting() } else { due_for_notes() };
         let calls = RefCell::new(vec![]);
         let segs = [seg(29_000, "them", "When can you ship the beta?")];
-        step(live, &mut sched, &segs, 30_000, &|j, system, user| {
+        step(live, job, &segs, 30_000, &|j, system, user| {
             calls.borrow_mut().push((j, system.to_string(), user.to_string()));
             reply.map(str::to_string).map_err(str::to_string)
         }, log);
@@ -678,51 +762,6 @@ mod tests {
     }
 
     #[test]
-    fn withdrawing_the_cloud_opt_in_mid_meeting_stops_sending() {
-        use std::sync::atomic::AtomicUsize;
-        let mut s = settings(TextEngine::OpenAiCompatible, "https://api.groq.com/openai/v1");
-        s.talking_cloud_host = "api.groq.com".into();
-        let opted = Arc::new(AtomicBool::new(true));
-        let calls = Arc::new(AtomicUsize::new(0));
-        let current = {
-            let (s, opted) = (s.clone(), opted.clone());
-            move || {
-                let mut now = s.clone();
-                if !opted.load(Ordering::Relaxed) {
-                    now.talking_cloud_host.clear();
-                }
-                now
-            }
-        };
-        let chat = {
-            let calls = calls.clone();
-            move |_: &Settings, _: Job, _: &str, _: &str| {
-                calls.fetch_add(1, Ordering::Relaxed);
-                Ok(ASKED.to_string())
-            }
-        };
-        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let live = start(s, 8 * GIB, meeting.clone(), stop.clone(), current, chat, |_| {});
-        let wait_for = |done: &dyn Fn() -> bool| {
-            let began = std::time::Instant::now();
-            while !done() && began.elapsed().as_secs() < 5 {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-        };
-        meeting.lock().unwrap().segments.push(seg(0, "them", "first"));
-        wait_for(&|| calls.load(Ordering::Relaxed) > 0);
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
-        opted.store(false, Ordering::Relaxed);
-        wait_for(&|| live.lock().unwrap().availability != Some(Availability::Ready));
-        meeting.lock().unwrap().segments.push(seg(1, "them", "second"));
-        std::thread::sleep(std::time::Duration::from_millis(600));
-        stop.store(true, Ordering::Relaxed);
-        assert_eq!(calls.load(Ordering::Relaxed), 1, "the transcript was sent after the opt-out");
-        assert_eq!(live.lock().unwrap().availability, Some(Availability::NeedsCloudOptIn { host: "api.groq.com".into() }));
-    }
-
-    #[test]
     fn an_unreachable_model_shows_the_message_and_the_next_success_clears_it() {
         let live = Mutex::new(Live::default());
         run_step(&live, Job::Suggest, Err("connection refused"));
@@ -742,40 +781,200 @@ mod tests {
         assert_eq!(l.summary, "s2");
     }
 
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("opendictate-talking-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn worker(dir: &Path, current: impl Fn() -> Settings + Send + Sync + 'static, chat: impl Fn(&Settings, Job, &str, &str, &dyn Fn() -> bool) -> Result<String, String> + Send + Sync + 'static) -> Worker {
+        Worker { dir: dir.to_path_buf(), final_window: Duration::from_millis(300), current: Arc::new(current), chat: Arc::new(chat), log: Box::new(|_| {}) }
+    }
+
+    fn wait_for(done: &dyn Fn() -> bool) {
+        let began = std::time::Instant::now();
+        while !done() && began.elapsed().as_secs() < 5 {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn local_lm(port: u16) -> Settings {
+        let mut s = settings(TextEngine::OpenAiCompatible, &format!("http://127.0.0.1:{port}/v1"));
+        s.text_model = "m".into();
+        s
+    }
+
     #[test]
     fn spawn_makes_no_calls_when_talking_points_is_unavailable() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let s = settings(TextEngine::Ollama, &format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port()));
         let meeting = Arc::new(Mutex::new(crate::meeting::Live { segments: vec![seg(0, "them", "hello?")], ..Default::default() }));
-        let stop = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("unavailable");
         let current = s.clone();
-        let live = start(s, 8 * GIB, meeting, stop.clone(), move || current.clone(), json_chat, |_| {});
-        std::thread::sleep(std::time::Duration::from_millis(600));
-        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let live = start(s, 8 * GIB, meeting, ended.clone(), worker(&dir, move || current.clone(), json_chat));
+        std::thread::sleep(Duration::from_millis(600));
+        ended.store(true, Ordering::Relaxed);
         listener.set_nonblocking(true).unwrap();
         assert!(listener.accept().is_err(), "a call reached the text model");
         assert_eq!(live.lock().unwrap().availability, Some(Availability::NeedsMemory));
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(!dir.join("talking_points.json").exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn spawn_asks_the_model_once_a_segment_arrives() {
         let completion = serde_json::json!({"choices":[{"message":{"content": ASKED}}]}).to_string();
         let (port, requests) = crate::engines::fake_server(vec![crate::engines::http_reply("200 OK", "", &completion)]);
-        let mut s = settings(TextEngine::OpenAiCompatible, &format!("http://127.0.0.1:{port}/v1"));
-        s.text_model = "m".into();
+        let s = local_lm(port);
         let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
-        let stop = Arc::new(AtomicBool::new(false));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("asks");
         let current = s.clone();
-        let live = start(s, 16 * GIB, meeting.clone(), stop.clone(), move || current.clone(), json_chat, |_| {});
+        let live = start(s, 16 * GIB, meeting.clone(), ended.clone(), worker(&dir, move || current.clone(), json_chat));
         meeting.lock().unwrap().segments.push(seg(0, "them", "When can you ship?"));
-        let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("no call reached the model");
+        let request = requests.recv_timeout(Duration::from_secs(5)).expect("no call reached the model");
         assert!(request.contains("When can you ship?"));
-        let began = std::time::Instant::now();
-        while live.lock().unwrap().suggestions.is_none() && began.elapsed().as_secs() < 5 {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        wait_for(&|| live.lock().unwrap().suggestions.is_some());
+        ended.store(true, Ordering::Relaxed);
         assert_eq!(live.lock().unwrap().suggestions.as_ref().unwrap().reason, "They asked you for a date");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn counting_chat(calls: &Arc<std::sync::atomic::AtomicUsize>) -> impl Fn(&Settings, Job, &str, &str, &dyn Fn() -> bool) -> Result<String, String> + Send + Sync + 'static {
+        let calls = calls.clone();
+        move |_, _, _, _, _| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            Ok(ASKED.to_string())
+        }
+    }
+
+    #[test]
+    fn withdrawing_the_cloud_opt_in_mid_meeting_stops_sending_until_the_user_opts_back_in() {
+        let mut s = settings(TextEngine::OpenAiCompatible, "https://api.groq.com/openai/v1");
+        s.talking_cloud_host = "api.groq.com".into();
+        let opted = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let current = {
+            let (s, opted) = (s.clone(), opted.clone());
+            move || {
+                let mut now = s.clone();
+                if !opted.load(Ordering::Relaxed) {
+                    now.talking_cloud_host.clear();
+                }
+                now
+            }
+        };
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("withdraw");
+        let live = start(s, 8 * GIB, meeting.clone(), ended.clone(), worker(&dir, current, counting_chat(&calls)));
+        let count = || calls.load(Ordering::Relaxed);
+        meeting.lock().unwrap().segments.push(seg(0, "them", "first"));
+        wait_for(&|| count() > 0);
+        assert_eq!(count(), 1);
+        opted.store(false, Ordering::Relaxed);
+        meeting.lock().unwrap().segments.push(seg(1, "them", "second"));
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(count(), 1, "the transcript was sent after the opt-out");
+        assert_eq!(live.lock().unwrap().availability, Some(Availability::NeedsCloudOptIn { host: "api.groq.com".into() }));
+        opted.store(true, Ordering::Relaxed);
+        meeting.lock().unwrap().segments.push(seg(2, "them", "third"));
+        wait_for(&|| count() > 1);
+        ended.store(true, Ordering::Relaxed);
+        assert_eq!(count(), 2, "opting back in did not resume");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_last_words_of_a_meeting_reach_the_saved_notes() {
+        let s = local_lm(9);
+        let chat = |_: &Settings, job: Job, _: &str, user: &str, _: &dyn Fn() -> bool| {
+            Ok(match job {
+                Job::Notes if user.contains("Raj will list the renewing contracts") => r#"{"summary":"s","actions":[{"who":"Raj","what":"list the renewing contracts"}]}"#.to_string(),
+                Job::Notes => r#"{"summary":"s","actions":[]}"#.to_string(),
+                Job::Suggest => ASKED.to_string(),
+            })
+        };
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("last-words");
+        let current = s.clone();
+        start(s, 16 * GIB, meeting.clone(), ended.clone(), worker(&dir, move || current.clone(), chat));
+        meeting.lock().unwrap().segments.push(seg(0, "them", "Raj will list the renewing contracts."));
+        ended.store(true, Ordering::Relaxed);
+        let saved = dir.join("talking_points.json");
+        wait_for(&|| saved.exists());
+        let text = std::fs::read_to_string(&saved).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(text.contains("list the renewing contracts"), "{text}");
+    }
+
+    #[test]
+    fn stopping_never_waits_on_the_model() {
+        let s = local_lm(9);
+        let entered = Arc::new(AtomicBool::new(false));
+        let chat = {
+            let entered = entered.clone();
+            move |_: &Settings, _: Job, _: &str, _: &str, _: &dyn Fn() -> bool| {
+                entered.store(true, Ordering::Relaxed);
+                std::thread::sleep(Duration::from_secs(10));
+                Ok(ASKED.to_string())
+            }
+        };
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let ended = Arc::new(AtomicBool::new(false));
+        let dir = temp_dir("never-waits");
+        let current = s.clone();
+        start(s, 16 * GIB, meeting.clone(), ended.clone(), worker(&dir, move || current.clone(), chat));
+        meeting.lock().unwrap().segments.push(seg(0, "them", "hello"));
+        wait_for(&|| entered.load(Ordering::Relaxed));
+        let began = std::time::Instant::now();
+        ended.store(true, Ordering::Relaxed);
+        let saved = dir.join("talking_points.json");
+        wait_for(&|| saved.exists());
+        let took = began.elapsed();
+        let written = saved.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(written);
+        assert!(took < Duration::from_secs(2), "saving waited {took:?} on the model");
+    }
+
+    #[test]
+    fn notes_go_first_once_they_have_waited_a_minute() {
+        let mut s = suggesting();
+        assert_eq!(s.next(0), Some(Job::Suggest));
+        s.done(Job::Suggest, 0);
+        for now in [30_000, 60_000, 89_999] {
+            s.on_segment();
+            assert_eq!(s.next(now), Some(Job::Suggest), "at {now}");
+            s.done(Job::Suggest, now);
+        }
+        s.on_segment();
+        assert_eq!(s.next(90_000), Some(Job::Notes));
+    }
+
+    fn strict_everywhere(v: &serde_json::Value) -> bool {
+        let Some(props) = v.get("properties").and_then(|p| p.as_object()) else {
+            return v.get("items").is_none_or(strict_everywhere);
+        };
+        let mut required: Vec<&str> = v["required"].as_array().into_iter().flatten().filter_map(|r| r.as_str()).collect();
+        let mut keys: Vec<&str> = props.keys().map(String::as_str).collect();
+        required.sort();
+        keys.sort();
+        v["additionalProperties"] == false && required == keys && props.values().all(strict_everywhere)
+    }
+
+    #[test]
+    fn schemas_are_strict_and_ask_for_long_tasks_only_from_a_local_server() {
+        for schema in [suggestions_schema(), notes_schema(true), notes_schema(false)] {
+            assert!(strict_everywhere(&schema), "{schema}");
+        }
+        assert!(notes_schema(true).to_string().contains("minLength"));
+        assert!(!notes_schema(false).to_string().contains("minLength"));
+        assert!(!suggestions_schema().to_string().contains("minLength"));
     }
 
     #[test]
@@ -784,7 +983,7 @@ mod tests {
         let mut s = settings(TextEngine::OpenAiCompatible, "http://127.0.0.1:1234/v1");
         s.text_model = "phi-4-mini-instruct-chat-mlx".into();
         let chat = |job: Job, system: &str, user: &str| {
-            let raw = json_chat(&s, job, system, user);
+            let raw = json_chat(&s, job, system, user, &|| true);
             println!("raw {job:?}: {raw:?}");
             raw
         };
@@ -794,8 +993,8 @@ mod tests {
             seg(9_000, "both", "Raj will list the renewing annual contracts."),
         ];
         let live = Mutex::new(Live::default());
-        step(&live, &mut suggesting(), &segs[..1], 2_000, &chat, &|l| println!("log: {l}"));
-        step(&live, &mut due_for_notes(), &segs, 30_000, &chat, &|l| println!("log: {l}"));
+        step(&live, Job::Suggest, &segs[..1], 2_000, &chat, &|l| println!("log: {l}"));
+        step(&live, Job::Notes, &segs, 30_000, &chat, &|l| println!("log: {l}"));
         let l = live.lock().unwrap();
         let sug = l.suggestions.clone().unwrap_or_default();
         println!("suggestions: {sug:?}\nactions: {:?}\nsummary: {}\nstatus: {:?}", l.actions.iter().map(|t| &t.action).collect::<Vec<_>>(), l.summary, l.status);
@@ -1005,7 +1204,7 @@ mod tests {
     fn schemas_name_the_fields_the_parsers_read() {
         let s = suggestions_schema().to_string();
         assert!(s.contains("reason") && s.contains("items") && s.contains("kind") && s.contains("text"));
-        let n = notes_schema().to_string();
+        let n = notes_schema(true).to_string();
         assert!(n.contains("summary") && n.contains("actions") && n.contains("who") && n.contains("what"));
     }
 

@@ -182,7 +182,9 @@ pub struct Session {
     pub dir: PathBuf,
     pub source: String,
     pub live: Arc<Mutex<Live>>,
+    #[allow(dead_code)]
     pub talking: Option<Arc<Mutex<crate::talking::Live>>>,
+    talking_ended: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
@@ -212,8 +214,9 @@ impl Session {
             let settings = s.clone();
             move || run(cap, dir, live, stop, settings)
         });
-        let talking = s.talking_points.then(|| crate::talking::spawn(s.clone(), live.clone(), stop.clone(), dir.clone()));
-        Ok(Self { id, dir, source: source.to_string(), live, talking, stop, worker: Some(worker) })
+        let talking_ended = Arc::new(AtomicBool::new(false));
+        let talking = s.talking_points.then(|| crate::talking::spawn(s.clone(), live.clone(), talking_ended.clone(), dir.clone()));
+        Ok(Self { id, dir, source: source.to_string(), live, talking, talking_ended, stop, worker: Some(worker) })
     }
 
     /// Stops recording and waits for the last chunk to be transcribed.
@@ -227,9 +230,7 @@ impl Session {
         if let Some(w) = self.worker.take() {
             let _ = w.join();
         }
-        if let Some(t) = self.talking.as_ref().and_then(|t| t.lock().ok()) {
-            crate::talking::save(&self.dir, &t);
-        }
+        self.talking_ended.store(true, Ordering::Relaxed);
         let path = self.dir.join("meta.json");
         if let Some(mut m) = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<Meta>(&s).ok()) {
             m.ended = Some(now());
