@@ -10,6 +10,7 @@ pub struct Stretch {
     pub samples: Vec<f32>,
     pub secs: f32,
     pub voiced_secs: f32,
+    pub start_secs: f64,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -32,6 +33,7 @@ pub struct Cutter {
     side: Option<Side>,
     turn_run: usize,
     split_ok: bool,
+    consumed: usize,
 }
 
 fn rms(v: &[f32]) -> f32 {
@@ -63,6 +65,7 @@ impl Cutter {
             side: None,
             turn_run: 0,
             split_ok: true,
+            consumed: 0,
         }
     }
 
@@ -144,6 +147,8 @@ impl Cutter {
 
     fn take_stretch(&mut self, upto_frames: usize) -> Option<Stretch> {
         let at = (upto_frames * self.frame).min(self.mine.len());
+        let start_secs = self.consumed as f64 / self.rate;
+        self.consumed += at;
         let tail_mine = self.mine.split_off(at);
         let tail_theirs = self.theirs.split_off(at);
         let mine = std::mem::replace(&mut self.mine, tail_mine);
@@ -176,6 +181,7 @@ impl Cutter {
             voice,
             secs: (samples.len() as f64 / self.rate) as f32,
             voiced_secs: (voiced as f64 * FRAME_SECS) as f32,
+            start_secs,
             samples,
         })
     }
@@ -427,5 +433,33 @@ mod tests {
             let peak = st.samples.iter().fold(0f32, |m, x| m.max(x.abs()));
             assert!(!worth_transcribing(peak, rms(&st.samples), st.voiced_secs));
         }
+    }
+
+    fn starts(mine: &[f32], theirs: &[f32]) -> Vec<f64> {
+        cut_all(mine, theirs, true).iter().map(|s| s.start_secs).collect()
+    }
+
+    #[test]
+    fn a_stretch_after_dropped_silence_starts_where_it_was_spoken() {
+        let theirs = cat(&[silence(3.0), speech(1.0), silence(1.0)]);
+        let got = starts(&vec![0.0; theirs.len()], &theirs);
+        assert_eq!(got.len(), 1);
+        assert!((got[0] - 3.0).abs() < 0.05, "{got:?}");
+    }
+
+    #[test]
+    fn a_stretch_after_a_turn_cut_starts_where_the_new_turn_began() {
+        let (mine, theirs) = (cat(&[silence(2.0), speech(2.0)]), cat(&[speech(2.0), silence(2.0)]));
+        let got = starts(&mine, &theirs);
+        assert_eq!(got.len(), 2);
+        assert!((got[1] - 2.0).abs() < 0.05, "{got:?}");
+    }
+
+    #[test]
+    fn a_stretch_after_a_forced_cut_starts_where_the_cut_fell() {
+        let theirs = speech(20.0);
+        let got = starts(&vec![0.0; theirs.len()], &theirs);
+        assert_eq!(got.len(), 2);
+        assert!((got[1] - 15.0).abs() < 0.05, "{got:?}");
     }
 }

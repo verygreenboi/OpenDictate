@@ -251,13 +251,12 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
     let rate = cap.rate;
     let mut cutter = crate::cut::Cutter::new(rate);
     let mut index = 0usize;
-    let mut at_ms = 0u64;
     let started = std::time::Instant::now();
     let transcribe = |wav: &[u8]| crate::engines::transcribe(&s, wav);
 
     let mut process = |stretches: Vec<crate::cut::Stretch>| {
         for st in stretches {
-            match handle_stretch(&dir, index, at_ms, &st, rate, &transcribe) {
+            match handle_stretch(&dir, index, &st, rate, &transcribe) {
                 Ok(Some(seg)) => {
                     if let Ok(mut l) = live.lock() {
                         l.segments.push(seg);
@@ -270,7 +269,6 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
                     }
                 }
             }
-            at_ms += (st.secs * 1000.0) as u64;
             index += 1;
         }
     };
@@ -320,7 +318,6 @@ fn rms(v: &[f32]) -> f32 {
 fn handle_stretch(
     dir: &Path,
     index: usize,
-    at_ms: u64,
     st: &crate::cut::Stretch,
     rate: f64,
     transcribe: &dyn Fn(&[u8]) -> Result<String, String>,
@@ -341,7 +338,7 @@ fn handle_stretch(
     match result {
         Ok(text) if !text.trim().is_empty() => {
             log(dir, &format!("    {}: {}", st.voice, text.trim().chars().take(60).collect::<String>()));
-            let seg = Segment { at_ms, secs: st.secs, text: text.trim().to_string(), voice: st.voice.to_string() };
+            let seg = Segment { at_ms: (st.start_secs * 1000.0).round() as u64, secs: st.secs, text: text.trim().to_string(), voice: st.voice.to_string() };
             append_segment(dir, &seg);
             Ok(Some(seg))
         }
@@ -620,13 +617,13 @@ mod tests {
         let samples = (0..(2.0 * RATE) as usize)
             .map(|i| amplitude * (2.0 * std::f32::consts::PI * 220.0 * i as f32 / RATE as f32).sin())
             .collect();
-        Stretch { voice: "them", samples, secs: 2.0, voiced_secs }
+        Stretch { voice: "them", samples, secs: 2.0, voiced_secs, start_secs: 1.5 }
     }
 
     #[test]
     fn appends_a_segment_with_the_stretch_voice_to_the_transcript() {
         let dir = temp_meeting("appends");
-        let seg = handle_stretch(&dir, 0, 1_500, &stretch(0.3, 2.0), RATE, &|_| Ok("hello".into()))
+        let seg = handle_stretch(&dir, 0, &stretch(0.3, 2.0), RATE, &|_| Ok("hello".into()))
             .unwrap()
             .unwrap();
         assert_eq!((seg.text.as_str(), seg.voice.as_str(), seg.at_ms), ("hello", "them", 1_500));
@@ -641,7 +638,7 @@ mod tests {
     #[test]
     fn skips_a_stretch_too_quiet_to_be_speech_without_calling_whisper() {
         let dir = temp_meeting("quiet");
-        let r = handle_stretch(&dir, 0, 0, &stretch(0.01, 2.0), RATE, &|_| panic!("whisper was called"));
+        let r = handle_stretch(&dir, 0, &stretch(0.01, 2.0), RATE, &|_| panic!("whisper was called"));
         assert!(matches!(r, Ok(None)));
         assert!(!dir.join("audio/000.wav").exists());
         assert!(!dir.join("transcript.jsonl").exists());
@@ -661,7 +658,7 @@ mod tests {
     #[test]
     fn reports_a_transcription_failure_and_still_deletes_the_audio() {
         let dir = temp_meeting("fails");
-        let r = handle_stretch(&dir, 0, 0, &stretch(0.3, 2.0), RATE, &|_| Err("boom".into()));
+        let r = handle_stretch(&dir, 0, &stretch(0.3, 2.0), RATE, &|_| Err("boom".into()));
         assert_eq!(r.unwrap_err(), "boom");
         assert!(!dir.join("audio/000.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
