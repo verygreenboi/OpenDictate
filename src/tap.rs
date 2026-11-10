@@ -29,7 +29,6 @@ struct Sink {
     /// said from what everyone else said.
     mine: Mutex<Vec<f32>>,
     theirs: Mutex<Vec<f32>>,
-    /// Host time of the first sample in `theirs`, written under its lock so a drain takes both together.
     first_host_ns: Mutex<Option<u64>>,
     timebase: (u32, u32),
     /// How many of the device's input channels belong to the microphone.
@@ -206,7 +205,7 @@ unsafe extern "C-unwind" fn io_proc(
     }
     if let Ok(mut out) = sink.theirs.lock() {
         let t = input_time.as_ref();
-        if t.mFlags.contains(AudioTimeStampFlags::HostTimeValid) {
+        if n_theirs > 0 && t.mFlags.contains(AudioTimeStampFlags::HostTimeValid) {
             if let Ok(mut first) = sink.first_host_ns.lock() {
                 first.get_or_insert(host_to_ns(t.mHostTime, sink.timebase.0, sink.timebase.1));
             }
@@ -540,6 +539,7 @@ mod tests {
     fn host_ticks_convert_to_nanoseconds_with_the_timebase() {
         assert_eq!(host_to_ns(3_000, 125, 3), 125_000);
         assert_eq!(host_to_ns(987_654_321, 1, 1), 987_654_321);
+        assert_eq!(host_to_ns(u64::MAX / 2, 125, 3), ((u64::MAX / 2) as u128 * 125 / 3) as u64);
     }
 
     #[test]
@@ -559,7 +559,7 @@ mod tests {
         let (numer, denom) = timebase();
         let now = host_to_ns(unsafe { mach_absolute_time() }, numer, denom);
         let elapsed = before.elapsed().as_nanos() as u64;
-        println!("first sample {} ms before the drain, opened {} ms before it", (now - first) / 1_000_000, elapsed / 1_000_000);
+        println!("first sample {} ms before the drain, opened {} ms before it", now.saturating_sub(first) / 1_000_000, elapsed / 1_000_000);
         assert!(first < now && now - first < elapsed + 1_000_000_000);
     }
 }
