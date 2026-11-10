@@ -150,7 +150,7 @@ unsafe extern "C-unwind" fn io_proc(
         for c in 0..ch {
             let global = index + c;
             let into_mine = split && global < sink.mic_channels;
-            let keep = into_mine && global < 2;
+            let keep = into_mine && global < MIC_INPUTS;
             if !into_mine {
                 n_theirs += 1;
             }
@@ -178,7 +178,7 @@ unsafe extern "C-unwind" fn io_proc(
         index += ch;
     }
     if let Ok(mut out) = sink.mine.lock() {
-        out.extend(mix_mic(&mic, frames));
+        out.extend(mix_mic(mic, frames));
     }
     if let Ok(mut out) = sink.theirs.lock() {
         let scale = 1.0 / n_theirs.max(1) as f32;
@@ -195,9 +195,11 @@ unsafe extern "C-unwind" fn io_proc(
     0
 }
 
-fn mix_mic(channels: &[Vec<f32>], frames: usize) -> Vec<f32> {
-    let peak = |c: &&Vec<f32>| c.iter().fold(0f32, |m, v| m.max(v.abs()));
-    match channels.iter().take(2).max_by(|a, b| peak(a).total_cmp(&peak(b))) {
+const MIC_INPUTS: usize = 2;
+
+fn mix_mic(channels: Vec<Vec<f32>>, frames: usize) -> Vec<f32> {
+    let peak = |c: &Vec<f32>| c.iter().fold(0f32, |m, v| m.max(v.abs()));
+    match channels.into_iter().take(MIC_INPUTS).max_by(|a, b| peak(a).total_cmp(&peak(b))) {
         Some(c) => c.clone(),
         None => vec![0f32; frames],
     }
@@ -514,7 +516,7 @@ mod tests {
         let mut loud = quiet();
         loud[10] = 0.3;
         channels[1] = loud;
-        let out = mix_mic(&channels, 480);
+        let out = mix_mic(channels, 480);
         assert!((peak(&out) - 0.3).abs() < 1e-6, "peak was {}", peak(&out));
     }
 
@@ -525,23 +527,23 @@ mod tests {
         for c in [2, 3, 6, 7] {
             channels[c] = tone(0.47);
         }
-        assert_eq!(mix_mic(&channels, 480), channels[0]);
+        assert_eq!(mix_mic(channels.clone(), 480), channels[0]);
     }
 
     #[test]
     fn a_mono_mic_passes_through_unchanged() {
         let mic = tone(0.2);
-        assert_eq!(mix_mic(&[mic.clone()], 480), mic);
+        assert_eq!(mix_mic(vec![mic.clone()], 480), mic);
     }
 
     #[test]
     fn the_louder_of_two_loud_channels_is_taken() {
         let channels = vec![tone(0.2), tone(0.5)];
-        assert_eq!(mix_mic(&channels, 480), channels[1]);
+        assert_eq!(mix_mic(channels.clone(), 480), channels[1]);
     }
 
     #[test]
     fn no_mic_channels_gives_silence_of_the_frame_length() {
-        assert_eq!(mix_mic(&[], 4), vec![0f32; 4]);
+        assert_eq!(mix_mic(vec![], 4), vec![0f32; 4]);
     }
 }
