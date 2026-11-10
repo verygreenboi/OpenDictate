@@ -658,7 +658,11 @@ mod tests {
     #[test]
     fn reports_a_transcription_failure_and_still_deletes_the_audio() {
         let dir = temp_meeting("fails");
-        let r = handle_stretch(&dir, 0, &stretch(0.3, 2.0), RATE, &|_| Err("boom".into()));
+        let wav = dir.join("audio/000.wav");
+        let r = handle_stretch(&dir, 0, &stretch(0.3, 2.0), RATE, &|_| {
+            assert!(wav.exists(), "audio was not written before transcribing");
+            Err("boom".into())
+        });
         assert_eq!(r.unwrap_err(), "boom");
         assert!(!dir.join("audio/000.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
