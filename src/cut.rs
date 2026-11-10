@@ -36,6 +36,8 @@ pub struct Cutter {
     quiet_run: usize,
     side: Option<Side>,
     turn_run: usize,
+    turn_start: (usize, usize, [usize; 3]),
+    votes: [usize; 3],
     split_ok: bool,
     consumed: usize,
     floors: [f32; 2],
@@ -80,6 +82,8 @@ impl Cutter {
             quiet_run: 0,
             side: None,
             turn_run: 0,
+            turn_start: (0, 0, [0; 3]),
+            votes: [0; 3],
             split_ok: true,
             consumed: 0,
             floors: [FLOOR_MAX; 2],
@@ -130,7 +134,6 @@ impl Cutter {
         if !you_voiced && !them_voiced {
             self.run = 0;
             self.quiet_run += 1;
-            self.turn_run = 0;
             if self.quiet_run >= PAUSE_FRAMES {
                 out.extend(self.take_stretch(self.frames));
             }
@@ -138,6 +141,7 @@ impl Cutter {
         }
         self.quiet_run = 0;
         self.run += 1;
+        let before = (self.frames - 1, self.voiced, self.votes);
         self.voiced += match self.run {
             MIN_RUN => MIN_RUN,
             r if r > MIN_RUN => 1,
@@ -145,11 +149,14 @@ impl Cutter {
         };
 
         let side = side_of(rise(you_rms, self.floors[0]), rise(them_rms, self.floors[1]));
-        if let Some(at) = self.turn_cut_at(side) {
-            self.voiced -= TURN_FRAMES;
+        self.votes[side as usize] += 1;
+        if let Some((at, voiced_before, votes_before)) = self.turn_cut_at(side, before) {
+            let voiced_after = self.voiced - voiced_before;
+            let votes_after = [0, 1, 2].map(|i| self.votes[i] - votes_before[i]);
+            (self.voiced, self.votes) = (voiced_before, votes_before);
             out.extend(self.take_stretch(at));
             self.side = Some(side);
-            self.voiced = TURN_FRAMES;
+            (self.voiced, self.votes) = (voiced_after, votes_after);
             return;
         }
         if self.frames >= FORCED_CUT_FRAMES {
@@ -157,19 +164,21 @@ impl Cutter {
         }
     }
 
-    fn turn_cut_at(&mut self, frame_side: Side) -> Option<usize> {
+    fn turn_cut_at(&mut self, frame_side: Side, here: (usize, usize, [usize; 3])) -> Option<(usize, usize, [usize; 3])> {
         match self.side {
             None if frame_side != Side::Both => self.side = Some(frame_side),
-            Some(side) if self.split_ok && frame_side != Side::Both && frame_side != side => {
+            Some(_) if frame_side == Side::Both => {}
+            Some(side) if self.split_ok && frame_side != side => {
+                if self.turn_run == 0 {
+                    self.turn_start = here;
+                }
                 self.turn_run += 1;
                 if self.turn_run >= TURN_FRAMES {
-                    return Some(self.frames - self.turn_run);
+                    return Some(self.turn_start);
                 }
-                return None;
             }
-            _ => {}
+            _ => self.turn_run = 0,
         }
-        self.turn_run = 0;
         None
     }
 
@@ -183,6 +192,7 @@ impl Cutter {
         let theirs = std::mem::replace(&mut self.theirs, tail_theirs);
         let voiced = self.voiced;
         let quietest = std::mem::replace(&mut self.quietest, self.floors);
+        let [you_votes, them_votes, both_votes] = std::mem::take(&mut self.votes).map(|v| v as f32);
         self.frames = self.frames.saturating_sub(upto_frames);
         self.voiced = 0;
         self.quiet_run = 0;
@@ -197,11 +207,14 @@ impl Cutter {
             let theirs_silent = theirs.iter().all(|x| *x == 0.0);
             ("both", if theirs_silent { mine } else { theirs })
         } else {
-            let (you, them) = (rise(rms(&mine), quietest[0]), rise(rms(&theirs), quietest[1]));
-            match side_of(you, them) {
-                Side::You => ("you", mine),
-                Side::Them => ("them", theirs),
-                Side::Both => ("both", if you >= them { mine } else { theirs }),
+            if you_votes > (them_votes + both_votes) * SIDE_RATIO {
+                ("you", mine)
+            } else if them_votes > (you_votes + both_votes) * SIDE_RATIO {
+                ("them", theirs)
+            } else if rise(rms(&mine), quietest[0]) >= rise(rms(&theirs), quietest[1]) {
+                ("both", mine)
+            } else {
+                ("both", theirs)
             }
         };
         Some(Stretch {
@@ -283,8 +296,9 @@ mod tests {
     fn a_turn_split_by_a_short_pause_does_not_cut_inside_the_pause() {
         let mine = cat(&[silence(1.0), speech(0.2), silence(0.3), speech(0.2)]);
         let theirs = cat(&[speech(1.0), silence(0.7)]);
-        let out = cut_all(&mine, &theirs, true);
-        assert_eq!(out.len(), 1);
+        let got = starts(&mine, &theirs);
+        assert_eq!(got.len(), 2);
+        assert!((got[1] - 1.0).abs() < 0.03, "{got:?}");
     }
 
     #[test]
@@ -549,15 +563,26 @@ mod tests {
     }
 
     #[test]
-    fn overlapping_speech_transcribes_the_stronger_side_at_full_level_not_an_average() {
-        let mine = cat(&[silence(1.0), speech(2.0), silence(0.8)]);
-        let theirs: Vec<f32> = cat(&[silence(1.0), syllables(2.0, 0.15), silence(0.8)]);
+    fn overlapping_speech_transcribes_the_side_further_above_its_floor_at_full_level() {
+        let talk = cat(&[silence(1.0), syllables(2.0, 0.02), silence(0.8)]);
+        let mine = over(&talk, &noise(3.8, 0.001, 7));
+        let theirs = over(&talk, &noise(3.8, 0.006, 99));
         let out = cut_all(&mine, &theirs, true);
         assert_eq!(voices(&out), ["both"]);
-        let peak = out[0].samples.iter().fold(0f32, |m, x| m.max(x.abs()));
-        assert!((peak - 0.3).abs() < 0.01, "{peak}");
+        assert!(rms(&theirs) > rms(&mine));
         let at = (out[0].start_secs * RATE) as usize;
         assert_eq!(out[0].samples, mine[at..at + out[0].samples.len()]);
+    }
+
+    fn stepping_noise(secs: f64, low: f32, high: f32) -> Vec<f32> {
+        (0..secs as usize).flat_map(|n| noise(1.0, if n % 2 == 0 { low } else { high }, 99 + n as u32)).collect()
+    }
+
+    #[test]
+    fn a_turn_with_gaps_between_syllables_still_cuts_between_speakers() {
+        let theirs = over(&cat(&[syllables(3.0, 0.03), silence(4.0)]), &stepping_noise(7.0, 0.0025, 0.005));
+        let mine = over(&cat(&[silence(3.0), syllables(3.0, 0.009), silence(1.0)]), &noise(7.0, 0.001, 7));
+        assert_eq!(voices(&cut_all(&mine, &theirs, true)), ["them", "you"]);
     }
 
     fn starts(mine: &[f32], theirs: &[f32]) -> Vec<f64> {
