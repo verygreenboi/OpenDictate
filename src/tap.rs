@@ -135,9 +135,9 @@ unsafe extern "C-unwind" fn io_proc(
         sink.split_ok.store(false, Ordering::Relaxed);
     }
 
-    let mut mine = vec![0f32; frames];
+    let mut mic: Vec<Vec<f32>> = Vec::new();
     let mut theirs = vec![0f32; frames];
-    let (mut n_mine, mut n_theirs) = (0usize, 0usize);
+    let mut n_theirs = 0usize;
     let mut peaks = vec![0f32; channels];
     let mut index = 0usize;
     for b in buffers {
@@ -150,20 +150,25 @@ unsafe extern "C-unwind" fn io_proc(
         for c in 0..ch {
             let global = index + c;
             let into_mine = split && global < sink.mic_channels;
-            if into_mine {
-                n_mine += 1;
-            } else {
+            if !into_mine {
                 n_theirs += 1;
             }
-            let target = if into_mine { &mut mine } else { &mut theirs };
+            let mut channel = vec![0f32; if into_mine { frames } else { 0 }];
             let mut peak = 0f32;
             for f in 0..n {
                 let v = data[f * ch + c];
-                target[f] += v;
+                if into_mine {
+                    channel[f] = v;
+                } else {
+                    theirs[f] += v;
+                }
                 let a = v.abs();
                 if a > peak {
                     peak = a;
                 }
+            }
+            if into_mine {
+                mic.push(channel);
             }
             if global < peaks.len() {
                 peaks[global] = peak;
@@ -172,8 +177,7 @@ unsafe extern "C-unwind" fn io_proc(
         index += ch;
     }
     if let Ok(mut out) = sink.mine.lock() {
-        let scale = 1.0 / n_mine.max(1) as f32;
-        out.extend(mine.iter().map(|s| s * scale));
+        out.extend(mix_mic(&mic, frames));
     }
     if let Ok(mut out) = sink.theirs.lock() {
         let scale = 1.0 / n_theirs.max(1) as f32;
@@ -188,6 +192,14 @@ unsafe extern "C-unwind" fn io_proc(
         }
     }
     0
+}
+
+fn mix_mic(channels: &[Vec<f32>], frames: usize) -> Vec<f32> {
+    let peak = |c: &&Vec<f32>| c.iter().fold(0f32, |m, v| m.max(v.abs()));
+    match channels.iter().max_by(|a, b| peak(a).total_cmp(&peak(b))) {
+        Some(c) => c.clone(),
+        None => vec![0f32; frames],
+    }
 }
 
 /// An OSStatus as the four-character code Core Audio means by it.
@@ -477,4 +489,48 @@ pub fn check(secs: u64) -> String {
         }
     }
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mix_mic;
+
+    fn peak(v: &[f32]) -> f32 {
+        v.iter().fold(0f32, |m, s| m.max(s.abs()))
+    }
+
+    fn quiet() -> Vec<f32> {
+        (0..480).map(|i| if i % 2 == 0 { 0.001 } else { -0.001 }).collect()
+    }
+
+    fn tone(level: f32) -> Vec<f32> {
+        (0..480).map(|i| level * (i as f32 * 0.1).sin()).collect()
+    }
+
+    #[test]
+    fn a_mic_on_one_of_sixteen_interface_channels_reaches_whisper_at_full_level() {
+        let mut channels: Vec<Vec<f32>> = (0..16).map(|_| quiet()).collect();
+        let mut loud = quiet();
+        loud[10] = 0.3;
+        channels[3] = loud;
+        let out = mix_mic(&channels, 480);
+        assert!((peak(&out) - 0.3).abs() < 1e-6, "peak was {}", peak(&out));
+    }
+
+    #[test]
+    fn a_mono_mic_passes_through_unchanged() {
+        let mic = tone(0.2);
+        assert_eq!(mix_mic(&[mic.clone()], 480), mic);
+    }
+
+    #[test]
+    fn the_louder_of_two_loud_channels_is_taken() {
+        let channels = vec![tone(0.2), tone(0.5)];
+        assert_eq!(mix_mic(&channels, 480), channels[1]);
+    }
+
+    #[test]
+    fn no_mic_channels_gives_silence_of_the_frame_length() {
+        assert_eq!(mix_mic(&[], 4), vec![0f32; 4]);
+    }
 }
