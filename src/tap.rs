@@ -195,9 +195,9 @@ unsafe extern "C-unwind" fn io_proc(
     0
 }
 
-const MIC_INPUTS: usize = 2;
+pub(crate) const MIC_INPUTS: usize = 2;
 
-fn mix_mic(channels: Vec<Vec<f32>>, frames: usize) -> Vec<f32> {
+pub(crate) fn mix_mic(channels: Vec<Vec<f32>>, frames: usize) -> Vec<f32> {
     let peak = |c: &Vec<f32>| c.iter().fold(0f32, |m, v| m.max(v.abs()));
     match channels.into_iter().take(MIC_INPUTS).max_by(|a, b| peak(a).total_cmp(&peak(b))) {
         Some(c) => c,
@@ -492,58 +492,4 @@ pub fn check(secs: u64) -> String {
         }
     }
     r
-}
-
-#[cfg(test)]
-mod tests {
-    use super::mix_mic;
-
-    fn peak(v: &[f32]) -> f32 {
-        v.iter().fold(0f32, |m, s| m.max(s.abs()))
-    }
-
-    fn quiet() -> Vec<f32> {
-        (0..480).map(|i| if i % 2 == 0 { 0.001 } else { -0.001 }).collect()
-    }
-
-    fn tone(level: f32) -> Vec<f32> {
-        (0..480).map(|i| level * (i as f32 * 0.1).sin()).collect()
-    }
-
-    #[test]
-    fn a_mic_on_one_of_sixteen_interface_channels_reaches_whisper_at_full_level() {
-        let mut channels: Vec<Vec<f32>> = (0..16).map(|_| quiet()).collect();
-        let mut loud = quiet();
-        loud[10] = 0.3;
-        channels[1] = loud;
-        let out = mix_mic(channels, 480);
-        assert!((peak(&out) - 0.3).abs() < 1e-6, "peak was {}", peak(&out));
-    }
-
-    #[test]
-    fn loopback_channels_after_the_first_two_are_never_taken_as_the_mic() {
-        let mut channels: Vec<Vec<f32>> = (0..16).map(|_| quiet()).collect();
-        channels[0] = tone(0.05);
-        for c in [2, 3, 6, 7] {
-            channels[c] = tone(0.47);
-        }
-        assert_eq!(mix_mic(channels.clone(), 480), channels[0]);
-    }
-
-    #[test]
-    fn a_mono_mic_passes_through_unchanged() {
-        let mic = tone(0.2);
-        assert_eq!(mix_mic(vec![mic.clone()], 480), mic);
-    }
-
-    #[test]
-    fn the_louder_of_two_loud_channels_is_taken() {
-        let channels = vec![tone(0.2), tone(0.5)];
-        assert_eq!(mix_mic(channels.clone(), 480), channels[1]);
-    }
-
-    #[test]
-    fn no_mic_channels_gives_silence_of_the_frame_length() {
-        assert_eq!(mix_mic(vec![], 4), vec![0f32; 4]);
-    }
 }
