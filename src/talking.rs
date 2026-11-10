@@ -326,7 +326,7 @@ pub fn is_local(url: &str) -> bool {
     matches!(host_of(url).as_str(), "localhost" | "127.0.0.1" | "::1")
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Availability {
     Ready,
     Disabled,
@@ -447,7 +447,7 @@ impl Scheduler {
     }
 }
 
-#[derive(Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct Live {
     pub summary: String,
     pub actions: Vec<Tracked>,

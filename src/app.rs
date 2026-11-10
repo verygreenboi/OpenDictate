@@ -1048,11 +1048,20 @@ impl DictateApp {
         let mut closed = false;
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("talking"), builder, |ui, _| {
             closed = ui.input(|i| i.viewport().close_requested());
-            let (Ok(meeting), Ok(mut t)) = (session.live.lock(), talking.lock()) else { return };
-            match crate::talking_view::draw(ui, &meeting, &t, vs) {
+            let Some(elapsed) = session.live.lock().ok().map(|m| {
+                vs.catch_up(&m);
+                m.elapsed
+            }) else {
+                return;
+            };
+            let Some(snapshot) = talking.lock().ok().map(|t| t.clone()) else { return };
+            // shortcut: Search stays off until Task 7 adds the Brave key; pass whether one is set then.
+            match crate::talking_view::draw(ui, elapsed, &snapshot, false, vs) {
                 Some(crate::talking_view::ViewAction::Copy(text)) => ui.ctx().copy_text(text),
-                Some(crate::talking_view::ViewAction::RemoveChip(i)) if i < t.chips.len() => {
-                    t.chips.remove(i);
+                Some(crate::talking_view::ViewAction::RemoveChip(query)) => {
+                    if let Ok(mut t) = talking.lock() {
+                        t.chips.retain(|c| c.query != query);
+                    }
                 }
                 _ => {}
             }
