@@ -58,8 +58,8 @@ pub struct Live {
     pub segments: Vec<Segment>,
     /// Set when a chunk failed to transcribe; the recording carries on.
     pub warning: Option<String>,
-    /// Loudest sample seen since the meeting started. Zero after the first
-    /// chunk means nothing is reaching the recorder at all, which is a very
+    /// Loudest sample seen since the meeting started. Still zero once samples
+    /// have arrived means nothing is reaching the recorder at all, which is a very
     /// different problem from a quiet room and has to be said differently.
     pub peak: f32,
     pub samples: usize,

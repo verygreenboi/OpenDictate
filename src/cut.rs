@@ -222,7 +222,7 @@ mod tests {
     fn cuts_after_half_a_second_of_silence_following_speech() {
         let theirs = cat(&[speech(2.0), silence(0.6)]);
         let out = Cutter::new(RATE).push(&silence(2.6), &theirs, true);
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
         assert_eq!(out[0].voice, "them");
         assert!((2.0..2.6).contains(&out[0].secs), "{}", out[0].secs);
     }
@@ -231,7 +231,7 @@ mod tests {
     fn does_not_cut_on_a_pause_shorter_than_half_a_second() {
         let theirs = cat(&[speech(1.0), silence(0.3), speech(1.0)]);
         let out = cut_all(&silence(2.3), &theirs, true);
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
     }
 
     #[test]
@@ -257,7 +257,7 @@ mod tests {
         let mine = cat(&[silence(1.0), speech(0.2), silence(0.3), speech(0.2)]);
         let theirs = cat(&[speech(1.0), silence(0.7)]);
         let out = cut_all(&mine, &theirs, true);
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
     }
 
     #[test]
@@ -265,7 +265,7 @@ mod tests {
         let mine = cat(&[silence(2.0), speech(0.2), silence(2.0)]);
         let theirs = cat(&[speech(2.0), silence(0.2), speech(2.0)]);
         let out = cut_all(&mine, &theirs, true);
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
         assert_eq!(out[0].voice, "them");
     }
 
@@ -297,7 +297,7 @@ mod tests {
         let mut c = Cutter::new(RATE);
         let mic = cat(&[speech(1.0), silence(0.6)]);
         let out = c.push(&mic, &[], false);
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
         assert_eq!(out[0].voice, "both");
     }
 
@@ -306,7 +306,7 @@ mod tests {
         let mut c = Cutter::new(RATE);
         let mic = cat(&[speech(1.25), silence(0.75)]);
         let out: Vec<_> = mic.chunks(12_000).flat_map(|m| c.push(m, &[], false)).collect();
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
         let mine = cat(&[silence(2.0), speech(2.0)]);
         let theirs = cat(&[speech(2.0), silence(2.0)]);
         let out = cut_all(&mine, &theirs, false);
-        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
+        assert_eq!(out.len(), 1);
         assert_eq!(out[0].voice, "both");
     }
 
