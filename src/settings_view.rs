@@ -704,10 +704,12 @@ fn general_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     ));
 }
 
+const MICROPHONE_ROW_HELP: &str = "Which microphone records your voice, in dictation and meetings.";
+
 fn audio_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
     section(ui, crate::icon::MIC_VOCAL, "Microphone");
     let mut changed = false;
-    row(ui, "Microphone", "Which microphone records your voice.", 260.0, |ui| {
+    row(ui, "Microphone", MICROPHONE_ROW_HELP, 260.0, |ui| {
         let default_label = match &app.default_mic {
             Some(n) => format!("System default ({n})"),
             None => "System default".to_string(),
@@ -972,6 +974,16 @@ fn talking_switch(saved: bool, needs_memory: bool) -> (bool, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn the_microphone_row_says_it_is_used_for_meetings() {
+        let harness = Harness::builder().with_context_setup(crate::theme::install).build_ui(|ui| {
+            row(ui, "Microphone", MICROPHONE_ROW_HELP, 260.0, |_| {});
+        });
+        harness.get_by_label("Which microphone records your voice, in dictation and meetings.");
+    }
 
     #[test]
     fn the_talking_points_switch_shows_off_and_locked_when_memory_is_too_low_even_if_saved_on() {
