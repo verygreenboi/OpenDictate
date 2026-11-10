@@ -1,8 +1,9 @@
-#![allow(dead_code)]
-
 use crate::meeting::Segment;
 use crate::settings::{Settings, TextEngine};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct Action {
@@ -49,12 +50,16 @@ pub struct Tracked {
 
 const RECENT_MS: u64 = 180_000;
 const BUNDLE_CAP: usize = 12_000;
+#[allow(dead_code)]
 const CHIP_CAP: usize = 4;
 const HEADER_CAP: usize = BUNDLE_CAP - 6_000;
 const BUNDLE_ACTIONS: usize = 15;
 const TRACKED_CAP: usize = 30;
+#[allow(dead_code)]
 const CHIP_TEXT_CAP: usize = 1_600;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024 * 1024;
+const NOTES_INTERVAL_MS: u64 = 30_000;
+const UNREACHABLE: &str = "Can't reach the text model. Check it in Models.";
 
 macro_rules! data_rule {
     () => {
@@ -265,6 +270,7 @@ pub fn merge_actions(list: &mut Vec<Tracked>, incoming: Vec<Action>) {
     }
 }
 
+#[allow(dead_code)]
 pub fn add_chip(chips: &mut Vec<Chip>, mut chip: Chip) {
     chip.text.truncate(floor_boundary(&chip.text, CHIP_TEXT_CAP));
     chips.push(chip);
@@ -273,7 +279,7 @@ pub fn add_chip(chips: &mut Vec<Chip>, mut chip: Chip) {
     }
 }
 
-fn host_of(url: &str) -> String {
+pub fn host_of(url: &str) -> String {
     let rest = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let authority = authority.rsplit('@').next().unwrap_or("");
@@ -297,15 +303,19 @@ pub enum Availability {
     NeedsCloudOptIn { host: String },
 }
 
+pub fn text_server(s: &Settings) -> Option<&str> {
+    match s.text_engine {
+        TextEngine::Off => None,
+        TextEngine::Ollama => Some(&s.ollama_url),
+        TextEngine::OpenAiCompatible => Some(&s.text_url),
+    }
+}
+
 pub fn availability(s: &Settings, physical_memory: u64) -> Availability {
     if !s.talking_points {
         return Availability::Disabled;
     }
-    let url = match s.text_engine {
-        TextEngine::Off => return Availability::NoTextModel,
-        TextEngine::Ollama => &s.ollama_url,
-        TextEngine::OpenAiCompatible => &s.text_url,
-    };
+    let Some(url) = text_server(s) else { return Availability::NoTextModel };
     if is_local(url) {
         return if physical_memory >= MIN_MEMORY { Availability::Ready } else { Availability::NeedsMemory };
     }
@@ -317,19 +327,346 @@ pub fn availability(s: &Settings, physical_memory: u64) -> Availability {
     }
 }
 
+pub fn set_cloud_opt_in(s: &mut Settings, on: bool) {
+    s.talking_cloud_host = match text_server(s) {
+        Some(url) if on => host_of(url),
+        _ => String::new(),
+    };
+}
+
 pub fn physical_memory() -> u64 {
-    std::process::Command::new("sysctl")
-        .args(["-n", "hw.memsize"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .and_then(|t| t.trim().parse().ok())
-        .unwrap_or(0)
+    static MEMORY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MEMORY.get_or_init(|| {
+        std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|t| t.trim().parse().ok())
+            .unwrap_or(0)
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Job {
+    Suggest,
+    Notes,
+}
+
+#[derive(Default)]
+pub struct Scheduler {
+    running: Option<Job>,
+    suggest_due: bool,
+    notes_due: bool,
+    last_notes_ms: u64,
+}
+
+impl Scheduler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn on_segment(&mut self) {
+        self.suggest_due = true;
+        self.notes_due = true;
+    }
+
+    pub fn next(&mut self, now_ms: u64) -> Option<Job> {
+        if self.running.is_some() {
+            return None;
+        }
+        let job = if self.suggest_due {
+            self.suggest_due = false;
+            Job::Suggest
+        } else if self.notes_due && now_ms.saturating_sub(self.last_notes_ms) >= NOTES_INTERVAL_MS {
+            self.notes_due = false;
+            Job::Notes
+        } else {
+            return None;
+        };
+        self.running = Some(job);
+        Some(job)
+    }
+
+    pub fn done(&mut self, job: Job, now_ms: u64) {
+        self.running = None;
+        if job == Job::Notes {
+            self.last_notes_ms = now_ms;
+        }
+    }
+}
+
+#[derive(Default, Serialize)]
+pub struct Live {
+    pub summary: String,
+    pub actions: Vec<Tracked>,
+    pub suggestions: Option<Suggestions>,
+    pub chips: Vec<Chip>,
+    #[serde(skip)]
+    pub status: Option<String>,
+    #[serde(skip)]
+    pub updated_ms: Option<u64>,
+    #[allow(dead_code)]
+    #[serde(skip)]
+    pub availability: Option<Availability>,
+}
+
+pub fn step(live: &Mutex<Live>, sched: &mut Scheduler, segments: &[Segment], now_ms: u64, chat: &dyn Fn(Job, &str, &str) -> Result<String, String>) {
+    let Some(job) = sched.next(now_ms) else { return };
+    let user = match live.lock() {
+        Ok(l) => bundle(&l.chips, &l.summary, &l.actions, segments, now_ms),
+        Err(_) => return sched.done(job, now_ms),
+    };
+    let system = if job == Job::Suggest { SUGGEST_SYSTEM } else { NOTES_SYSTEM };
+    let reply = chat(job, system, &user);
+    sched.done(job, now_ms);
+    let Ok(mut l) = live.lock() else { return };
+    let outcome = match (job, reply) {
+        (_, Err(_)) => Err(UNREACHABLE.to_string()),
+        (Job::Suggest, Ok(raw)) => parse_suggestions(&raw).map(|sug| {
+            if !sug.items.is_empty() {
+                l.suggestions = Some(sug);
+            }
+        }),
+        (Job::Notes, Ok(raw)) => parse_notes(&raw).map(|notes| {
+            if !notes.summary.is_empty() {
+                l.summary = notes.summary;
+            }
+            merge_actions(&mut l.actions, notes.actions);
+        }),
+    };
+    match outcome {
+        Ok(()) => {
+            l.status = None;
+            l.updated_ms = Some(now_ms);
+        }
+        Err(e) => l.status = Some(e),
+    }
+}
+
+pub fn spawn(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>) -> Arc<Mutex<Live>> {
+    start(s, physical_memory(), meeting, stop)
+}
+
+fn start(s: Settings, memory: u64, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>) -> Arc<Mutex<Live>> {
+    let gate = availability(&s, memory);
+    let ready = gate == Availability::Ready;
+    let live = Arc::new(Mutex::new(Live { availability: Some(gate), ..Live::default() }));
+    if ready {
+        let live = live.clone();
+        std::thread::spawn(move || run(s, meeting, stop, live));
+    }
+    live
+}
+
+fn run(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>, live: Arc<Mutex<Live>>) {
+    let model = Some(s.meeting_model.trim()).filter(|m| !m.is_empty());
+    let chat = |job: Job, system: &str, user: &str| match job {
+        Job::Suggest => crate::engines::chat_json(&s, model, system, user, "suggestions", &suggestions_schema()),
+        Job::Notes => crate::engines::chat_json(&s, model, system, user, "notes", &notes_schema()),
+    };
+    let mut sched = Scheduler::new();
+    let mut seen = 0;
+    while !stop.load(Ordering::Relaxed) {
+        let Ok((segments, now_ms)) = meeting.lock().map(|m| (m.segments.clone(), (m.elapsed * 1000.0) as u64)) else { return };
+        for _ in seen..segments.len() {
+            sched.on_segment();
+        }
+        seen = segments.len();
+        step(&live, &mut sched, &segments, now_ms, &chat);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+pub fn save(dir: &Path, live: &Live) {
+    if let Ok(json) = serde_json::to_string_pretty(live) {
+        let _ = std::fs::write(dir.join("talking_points.json"), json);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    fn suggesting() -> Scheduler {
+        let mut s = Scheduler::new();
+        s.on_segment();
+        s
+    }
+
+    fn due_for_notes() -> Scheduler {
+        let mut s = suggesting();
+        s.next(0);
+        s.done(Job::Suggest, 0);
+        s
+    }
+
+    fn run_step(live: &Mutex<Live>, job: Job, reply: Result<&str, &str>) -> Vec<(Job, String, String)> {
+        let mut sched = if job == Job::Suggest { suggesting() } else { due_for_notes() };
+        let calls = RefCell::new(vec![]);
+        let segs = [seg(29_000, "them", "When can you ship the beta?")];
+        step(live, &mut sched, &segs, 30_000, &|j, system, user| {
+            calls.borrow_mut().push((j, system.to_string(), user.to_string()));
+            reply.map(str::to_string).map_err(str::to_string)
+        });
+        calls.into_inner()
+    }
+
+    const ASKED: &str = r#"{"reason":"They asked you for a date","items":[{"kind":"reply","text":"Friday works"}]}"#;
+
+    #[test]
+    fn a_new_segment_starts_a_suggestion() {
+        assert_eq!(suggesting().next(0), Some(Job::Suggest));
+        assert_eq!(Scheduler::new().next(0), None);
+    }
+
+    #[test]
+    fn segments_arriving_during_a_suggestion_fold_into_one_more_run() {
+        let mut s = suggesting();
+        assert_eq!(s.next(0), Some(Job::Suggest));
+        s.on_segment();
+        s.on_segment();
+        s.on_segment();
+        s.done(Job::Suggest, 1);
+        assert_eq!(s.next(2), Some(Job::Suggest));
+        s.done(Job::Suggest, 2);
+        assert_eq!(s.next(3), None);
+    }
+
+    #[test]
+    fn never_starts_a_second_job_while_one_runs() {
+        let mut s = suggesting();
+        assert_eq!(s.next(40_000), Some(Job::Suggest));
+        s.on_segment();
+        assert_eq!(s.next(40_000), None);
+        assert_eq!(s.next(90_000), None);
+    }
+
+    #[test]
+    fn notes_wait_thirty_seconds_between_runs() {
+        let mut s = due_for_notes();
+        assert_eq!(s.next(29_999), None);
+        assert_eq!(s.next(30_000), Some(Job::Notes));
+        s.done(Job::Notes, 30_000);
+        assert_eq!(s.next(90_000), None, "no segment since the last notes");
+        s.on_segment();
+        assert_eq!(s.next(31_000), Some(Job::Suggest));
+        s.done(Job::Suggest, 31_000);
+        assert_eq!(s.next(59_999), None);
+        assert_eq!(s.next(60_000), Some(Job::Notes));
+    }
+
+    #[test]
+    fn suggestions_go_before_notes_when_both_are_due() {
+        let mut s = suggesting();
+        assert_eq!(s.next(30_000), Some(Job::Suggest));
+        s.done(Job::Suggest, 30_000);
+        assert_eq!(s.next(30_000), Some(Job::Notes));
+    }
+
+    #[test]
+    fn a_question_to_you_shows_suggestions_with_their_reason() {
+        let live = Mutex::new(Live::default());
+        let calls = run_step(&live, Job::Suggest, Ok(ASKED));
+        assert_eq!(calls.len(), 1);
+        assert_eq!((calls[0].0, calls[0].1.as_str()), (Job::Suggest, SUGGEST_SYSTEM));
+        assert!(calls[0].2.contains("[them] When can you ship the beta?"));
+        let l = live.lock().unwrap();
+        let sug = l.suggestions.as_ref().unwrap();
+        assert_eq!(sug.reason, "They asked you for a date");
+        assert_eq!(sug.items, vec![Suggestion { kind: Kind::Reply, text: "Friday works".into() }]);
+        assert_eq!(l.updated_ms, Some(30_000));
+    }
+
+    #[test]
+    fn an_empty_suggestion_reply_leaves_the_last_suggestions_alone() {
+        let live = Mutex::new(Live::default());
+        run_step(&live, Job::Suggest, Ok(ASKED));
+        run_step(&live, Job::Suggest, Ok(r#"{"reason":"nothing asked","items":[]}"#));
+        assert_eq!(live.lock().unwrap().suggestions.as_ref().unwrap().reason, "They asked you for a date");
+    }
+
+    #[test]
+    fn unparseable_output_keeps_the_last_good_notes_and_sets_a_status() {
+        let live = Mutex::new(Live::default());
+        let calls = run_step(&live, Job::Notes, Ok(r#"{"summary":"Beta ships Friday","actions":[{"who":"you","what":"send the build"}]}"#));
+        assert_eq!((calls[0].0, calls[0].1.as_str()), (Job::Notes, NOTES_SYSTEM));
+        run_step(&live, Job::Notes, Ok("I'm sorry, I can't"));
+        let l = live.lock().unwrap();
+        assert_eq!(l.summary, "Beta ships Friday");
+        assert_eq!(l.actions.len(), 1);
+        assert!(l.status.is_some());
+    }
+
+    #[test]
+    fn an_unreachable_model_shows_the_message_and_the_next_success_clears_it() {
+        let live = Mutex::new(Live::default());
+        run_step(&live, Job::Suggest, Err("connection refused"));
+        assert_eq!(live.lock().unwrap().status.as_deref(), Some("Can't reach the text model. Check it in Models."));
+        run_step(&live, Job::Suggest, Ok(ASKED));
+        assert_eq!(live.lock().unwrap().status, None);
+    }
+
+    #[test]
+    fn the_notes_reply_merges_actions_instead_of_replacing_them() {
+        let live = Mutex::new(Live::default());
+        run_step(&live, Job::Notes, Ok(r#"{"summary":"s1","actions":[{"who":"you","what":"send the build"}]}"#));
+        run_step(&live, Job::Notes, Ok(r#"{"summary":"s2","actions":[{"who":"Ann","what":"book the room"}]}"#));
+        let l = live.lock().unwrap();
+        let whats: Vec<_> = l.actions.iter().map(|t| t.action.what.as_str()).collect();
+        assert_eq!(whats, ["send the build", "book the room"]);
+        assert_eq!(l.summary, "s2");
+    }
+
+    #[test]
+    fn spawn_makes_no_calls_when_talking_points_is_unavailable() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let s = settings(TextEngine::Ollama, &format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port()));
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live { segments: vec![seg(0, "them", "hello?")], ..Default::default() }));
+        let stop = Arc::new(AtomicBool::new(false));
+        let live = start(s, 8 * GIB, meeting, stop.clone());
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        listener.set_nonblocking(true).unwrap();
+        assert!(listener.accept().is_err(), "a call reached the text model");
+        assert_eq!(live.lock().unwrap().availability, Some(Availability::NeedsMemory));
+    }
+
+    #[test]
+    fn spawn_asks_the_model_once_a_segment_arrives() {
+        let completion = serde_json::json!({"choices":[{"message":{"content": ASKED}}]}).to_string();
+        let (port, requests) = crate::engines::fake_server(vec![crate::engines::http_reply("200 OK", "", &completion)]);
+        let mut s = settings(TextEngine::OpenAiCompatible, &format!("http://127.0.0.1:{port}/v1"));
+        s.text_model = "m".into();
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let live = start(s, 16 * GIB, meeting.clone(), stop.clone());
+        meeting.lock().unwrap().segments.push(seg(0, "them", "When can you ship?"));
+        let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("no call reached the model");
+        assert!(request.contains("When can you ship?"));
+        let began = std::time::Instant::now();
+        while live.lock().unwrap().suggestions.is_none() && began.elapsed().as_secs() < 5 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(live.lock().unwrap().suggestions.as_ref().unwrap().reason, "They asked you for a date");
+    }
+
+    #[test]
+    fn save_writes_talking_points_json_next_to_the_transcript() {
+        let dir = std::env::temp_dir().join(format!("opendictate-talking-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut live = Live { summary: "Beta ships Friday".into(), ..Default::default() };
+        merge_actions(&mut live.actions, vec![act("you", "send the build")]);
+        live.status = Some("Can't reach the text model. Check it in Models.".into());
+        save(&dir, &live);
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("talking_points.json")).unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(v["summary"], "Beta ships Friday");
+        assert_eq!(v["actions"][0]["action"]["what"], "send the build");
+        assert!(v.get("status").is_none());
+    }
 
     const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -558,6 +895,16 @@ mod tests {
         let mut s = settings(TextEngine::OpenAiCompatible, " https://api.openai.com/v1 ");
         s.talking_cloud_host = "  API.openai.com ".into();
         assert_eq!(availability(&s, 8 * GIB), Availability::Ready);
+    }
+
+    #[test]
+    fn opting_in_covers_the_current_host_and_opting_out_clears_it() {
+        let mut s = settings(TextEngine::OpenAiCompatible, "https://API.groq.com/openai/v1");
+        set_cloud_opt_in(&mut s, true);
+        assert_eq!(s.talking_cloud_host, "api.groq.com");
+        assert_eq!(availability(&s, 8 * GIB), Availability::Ready);
+        set_cloud_opt_in(&mut s, false);
+        assert_eq!(s.talking_cloud_host, "");
     }
 
     fn tracked(n: usize) -> Vec<Tracked> {
