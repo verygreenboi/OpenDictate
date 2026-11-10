@@ -263,9 +263,30 @@ mod tests {
             for (n, stream) in listener.incoming().flatten().enumerate() {
                 let (status, body) = &replies[n % replies.len()];
                 let mut stream = stream;
-                stream.set_read_timeout(Some(Duration::from_millis(300))).ok();
+                stream.set_read_timeout(Some(Duration::from_secs(5))).ok();
+                let mut request = Vec::new();
                 let mut buf = [0u8; 65536];
-                while stream.read(&mut buf).is_ok_and(|n| n == buf.len()) {}
+                let head_end = loop {
+                    if let Some(at) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break at + 4;
+                    }
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break request.len(),
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                };
+                let head = String::from_utf8_lossy(&request[..head_end]).to_lowercase();
+                let wanted = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("content-length:"))
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
+                while request.len() < head_end + wanted {
+                    match stream.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&buf[..n]),
+                    }
+                }
                 let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
             }
         });
