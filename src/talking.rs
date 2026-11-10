@@ -208,9 +208,13 @@ fn text_of(v: &serde_json::Value, field: &str) -> String {
 
 pub fn parse_suggestions(raw: &str) -> Result<Suggestions, String> {
     parse_object(raw, |v| {
-        let items = v.get("items")?.as_array()?;
+        let items = v.get("items").and_then(|i| i.as_array());
+        if items.is_none() && v.get("reason").is_none() {
+            return None;
+        }
         let items = items
-            .iter()
+            .into_iter()
+            .flatten()
             .filter_map(|i| {
                 let kind = match text_of(i, "kind").to_lowercase().as_str() {
                     "reply" => Kind::Reply,
@@ -615,6 +619,12 @@ mod tests {
     fn suggestions_without_a_reason_still_parse() {
         let s = parse_suggestions("{\"items\":[]}").unwrap();
         assert_eq!(s, Suggestions::default());
+    }
+
+    #[test]
+    fn a_reason_only_reply_means_no_suggestions() {
+        let s = parse_suggestions("{\"reason\":\"nothing asked\"}").unwrap();
+        assert_eq!(s, Suggestions { reason: "nothing asked".into(), items: vec![] });
     }
 
     #[test]
