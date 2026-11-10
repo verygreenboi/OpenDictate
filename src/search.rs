@@ -5,6 +5,7 @@ use std::time::Duration;
 
 const BASE: &str = "https://api.search.brave.com";
 const QUERY_CAP: usize = 400;
+const FAILED: &str = "Search failed: ";
 const RESULTS: usize = 3;
 const CHIP_TEXT: usize = 1_600;
 
@@ -78,11 +79,24 @@ pub fn brave(key: &str, query: &str) -> Result<Chip, String> {
 
 fn search_with(live: &Arc<Mutex<Live>>, text: &str, fetch: impl Fn(&str) -> Result<Chip, String>) {
     let query: String = text.trim().chars().take(QUERY_CAP).collect();
+    {
+        let Ok(mut l) = live.lock() else { return };
+        if l.chips.iter().any(|c| c.query == query) || l.searching.contains(&query) {
+            return;
+        }
+        l.searching.push(query.clone());
+    }
     let result = fetch(&query);
     let Ok(mut l) = live.lock() else { return };
+    l.searching.retain(|q| *q != query);
     match result {
-        Ok(chip) => talking::add_chip(&mut l.chips, chip),
-        Err(e) => l.status = Some(format!("Search failed: {e}")),
+        Ok(chip) => {
+            talking::add_chip(&mut l.chips, chip);
+            if l.status.as_deref().is_some_and(|s| s.starts_with(FAILED)) {
+                l.status = None;
+            }
+        }
+        Err(e) => l.status = Some(format!("{FAILED}{e}")),
     }
 }
 
@@ -182,5 +196,57 @@ mod tests {
         let l = live.lock().unwrap();
         assert!(l.status.as_deref().unwrap().starts_with("Search failed: "));
         assert!(l.chips.is_empty());
+    }
+
+    fn ok_chip(q: &str) -> Result<Chip, String> {
+        Ok(Chip { query: q.into(), text: "t".into() })
+    }
+
+    #[test]
+    fn a_successful_search_clears_an_earlier_search_failure() {
+        let live = Arc::new(Mutex::new(Live { status: Some("Search failed: Brave rate limit, try again shortly".into()), ..Live::default() }));
+        search_with(&live, "rust", ok_chip);
+        assert!(live.lock().unwrap().status.is_none());
+    }
+
+    #[test]
+    fn a_successful_search_leaves_a_model_error_alone() {
+        let live = Arc::new(Mutex::new(Live { status: Some("Can't reach the text model. Check it in Models.".into()), ..Live::default() }));
+        search_with(&live, "rust", ok_chip);
+        assert_eq!(live.lock().unwrap().status.as_deref(), Some("Can't reach the text model. Check it in Models."));
+    }
+
+    #[test]
+    fn a_search_is_skipped_when_a_chip_for_the_same_query_exists() {
+        let live = Arc::new(Mutex::new(Live { chips: vec![Chip { query: "rust".into(), text: "t".into() }], ..Live::default() }));
+        search_with(&live, " rust ", |_| panic!("fetched"));
+        assert_eq!(live.lock().unwrap().chips.len(), 1);
+    }
+
+    #[test]
+    fn a_search_is_skipped_while_the_same_query_is_in_flight() {
+        let live = Arc::new(Mutex::new(Live::default()));
+        let (started, wait) = (std::sync::mpsc::channel::<()>(), std::sync::mpsc::channel::<()>());
+        let l2 = live.clone();
+        let first = std::thread::spawn(move || {
+            search_with(&l2, "rust", |q| {
+                started.0.send(()).unwrap();
+                wait.1.recv().unwrap();
+                ok_chip(q)
+            })
+        });
+        started.1.recv().unwrap();
+        search_with(&live, "rust", |_| panic!("fetched"));
+        wait.0.send(()).unwrap();
+        first.join().unwrap();
+        assert_eq!(live.lock().unwrap().chips.len(), 1);
+    }
+
+    #[test]
+    fn a_failed_search_can_be_retried() {
+        let live = Arc::new(Mutex::new(Live::default()));
+        search_with(&live, "rust", |_| Err("x".into()));
+        search_with(&live, "rust", ok_chip);
+        assert_eq!(live.lock().unwrap().chips.len(), 1);
     }
 }
