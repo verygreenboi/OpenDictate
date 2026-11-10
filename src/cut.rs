@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 const FRAME_SECS: f64 = 0.02;
 const VOICED_RMS: f32 = 0.01;
 const PAUSE_FRAMES: usize = 25;
