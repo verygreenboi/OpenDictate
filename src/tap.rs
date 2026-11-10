@@ -200,7 +200,7 @@ const MIC_INPUTS: usize = 2;
 fn mix_mic(channels: Vec<Vec<f32>>, frames: usize) -> Vec<f32> {
     let peak = |c: &Vec<f32>| c.iter().fold(0f32, |m, v| m.max(v.abs()));
     match channels.into_iter().take(MIC_INPUTS).max_by(|a, b| peak(a).total_cmp(&peak(b))) {
-        Some(c) => c.clone(),
+        Some(c) => c,
         None => vec![0f32; frames],
     }
 }
