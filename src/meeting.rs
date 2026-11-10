@@ -160,7 +160,7 @@ fn wav_16k_mono(samples: &[f32]) -> Vec<u8> {
 
 /// A line per chunk, beside the transcript. A meeting that comes back empty
 /// has to be able to say why without being run again under a debugger.
-fn log(dir: &Path, line: &str) {
+pub(crate) fn log(dir: &Path, line: &str) {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("levels.log")) {
         let _ = writeln!(f, "{line}");
@@ -212,7 +212,7 @@ impl Session {
             let settings = s.clone();
             move || run(cap, dir, live, stop, settings)
         });
-        let talking = s.talking_points.then(|| crate::talking::spawn(s.clone(), live.clone(), stop.clone()));
+        let talking = s.talking_points.then(|| crate::talking::spawn(s.clone(), live.clone(), stop.clone(), dir.clone()));
         Ok(Self { id, dir, source: source.to_string(), live, talking, stop, worker: Some(worker) })
     }
 

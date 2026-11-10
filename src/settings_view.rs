@@ -523,7 +523,7 @@ fn models_tab(app: &mut DictateApp, ui: &mut egui::Ui) {
         let gate = crate::talking::availability(&probe, crate::talking::physical_memory());
         let needs_memory = gate == crate::talking::Availability::NeedsMemory;
         row(ui, "Talking Points", "Suggests what to say and keeps notes while a meeting runs.", 300.0, |ui| {
-            ui.add_enabled_ui(!needs_memory, |ui| {
+            ui.add_enabled_ui(!needs_memory || app.s.talking_points, |ui| {
                 changed |= crate::views::kit_checkbox(ui, &mut app.s.talking_points).changed();
             });
             if needs_memory {

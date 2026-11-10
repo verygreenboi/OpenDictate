@@ -590,7 +590,7 @@ fn chat_json_with(
     };
     body["response_format"] = json!({"type": "json_schema", "json_schema": {"name": name, "schema": schema, "strict": true}});
     let mut resp = send(&body)?;
-    if resp.status().is_client_error() {
+    if matches!(resp.status().as_u16(), 400 | 422) {
         if let Some(o) = body.as_object_mut() {
             o.remove("response_format");
         }
@@ -670,6 +670,17 @@ mod tests {
         let second = body_of(&requests.recv().unwrap());
         assert!(second.get("response_format").is_none());
         assert_eq!(second["messages"][1]["content"], "user");
+    }
+
+    #[test]
+    fn chat_json_resends_without_the_schema_only_when_the_server_rejects_the_request_shape() {
+        for (status, resent) in [("400 Bad Request", true), ("422 Unprocessable Entity", true), ("401 Unauthorized", false), ("403 Forbidden", false), ("404 Not Found", false), ("429 Too Many Requests", false)] {
+            let (port, requests) = fake_server(vec![http_reply(status, "", "{}"), completion("{}")]);
+            let out = chat_json_with(&local_text(port), None, "sys", "the meeting transcript", "notes", &json!({}), None);
+            assert!(requests.recv_timeout(Duration::from_secs(1)).is_ok());
+            let second = requests.recv_timeout(Duration::from_millis(300)).is_ok();
+            assert_eq!((second, out.is_ok()), (resent, resent), "{status}");
+        }
     }
 
     #[test]

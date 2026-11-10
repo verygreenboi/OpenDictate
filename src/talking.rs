@@ -60,6 +60,8 @@ const CHIP_TEXT_CAP: usize = 1_600;
 const MIN_MEMORY: u64 = 16 * 1024 * 1024 * 1024;
 const NOTES_INTERVAL_MS: u64 = 30_000;
 const UNREACHABLE: &str = "Can't reach the text model. Check it in Models.";
+const UNREADABLE: &str = "The model's answer couldn't be read.";
+const RECHECK_MS: u128 = 2_000;
 
 macro_rules! data_rule {
     () => {
@@ -68,21 +70,30 @@ macro_rules! data_rule {
 }
 
 pub const SUGGEST_SYSTEM: &str = concat!(data_rule!(), "You help the user, labelled [you], during a live meeting. \
-Lines are labelled [you], [them] or [both]. \
+Lines are labelled [you], [them] or [both]; [both] means the speaker could not be told apart. \
 Use only the transcript and the search results you are given; never add facts from anywhere else. \
 Return JSON with \"reason\" and \"items\". \
-Leave \"items\" empty unless the latest lines contain a question aimed at [you], a decision, or a commitment. \
-Otherwise offer at most 3 items, each with kind \"reply\" (something [you] could say) or \"ask\" (something [you] could ask), \
-and a text under 25 words. \
+Look at the latest lines. A question or request in a [them] or [both] line is aimed at [you], even when it starts with a person's name, \
+because that name may be the user's. \
+When there is one, the first item must have kind \"reply\": a short answer or commitment [you] could say back, \
+in the first person, that fits what was asked. \
+Add an item with kind \"ask\" only for something the transcript leaves open; never ask about anything the transcript already says. \
+Leave \"items\" empty when the latest lines hold no question, request, decision or commitment. \
+Offer at most 3 items, each with a text under 25 words. \
 Set \"reason\" to one short sentence saying what prompted the items, or why there are none.");
 
 pub const NOTES_SYSTEM: &str = concat!(data_rule!(), "You keep running notes of a meeting. \
 Lines are labelled [you], [them] or [both]. \
 Use only the transcript and the notes so far; never add facts. \
-Return JSON with \"summary\" and \"actions\". \
+Return JSON with \"summary\", \"decisions\" and \"actions\". \
 \"summary\" is the notes so far updated with the recent transcript, in at most 120 words. \
-\"actions\" lists every action point agreed so far, each with \"who\" (a name, or \"you\" or \"them\") and \"what\". \
-Keep earlier action points; add only commitments someone actually made.");
+\"decisions\" lists what the meeting decided or agreed (\"we decided...\"); a decision goes there and never in \"actions\". \
+\"actions\" lists every action point so far, one per person and task. \
+Someone asked to do something has an action point; someone who says they or another person will do something has one too. \
+For each, \"who\" is the person's name (such as \"Raj\"), or \"you\" or \"them\", \
+and \"what\" is the task with its object, such as \"list the renewing annual contracts\". \
+Do not leave out any person who was given a task. \
+Keep earlier action points; add only commitments someone actually made or was asked to make.");
 
 pub fn suggestions_schema() -> serde_json::Value {
     serde_json::json!({
@@ -110,19 +121,20 @@ pub fn notes_schema() -> serde_json::Value {
         "type": "object",
         "properties": {
             "summary": { "type": "string" },
+            "decisions": { "type": "array", "items": { "type": "string" } },
             "actions": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "who": { "type": "string" },
-                        "what": { "type": "string" }
+                        "what": { "type": "string", "minLength": 12 }
                     },
                     "required": ["who", "what"]
                 }
             }
         },
-        "required": ["summary", "actions"]
+        "required": ["summary", "decisions", "actions"]
     })
 }
 
@@ -261,7 +273,7 @@ pub fn merge_actions(list: &mut Vec<Tracked>, incoming: Vec<Action>) {
         t.new = false;
     }
     for action in incoming {
-        if !key(&action.what).is_empty() && !list.iter().any(|t| key(&t.action.what) == key(&action.what)) {
+        if action.what.split_whitespace().count() >= 2 && !list.iter().any(|t| key(&t.action.what) == key(&action.what)) {
             list.push(Tracked { action, new: true });
         }
     }
@@ -409,9 +421,11 @@ pub struct Live {
     #[allow(dead_code)]
     #[serde(skip)]
     pub availability: Option<Availability>,
+    #[serde(skip)]
+    pub was_ready: bool,
 }
 
-pub fn step(live: &Mutex<Live>, sched: &mut Scheduler, segments: &[Segment], now_ms: u64, chat: &dyn Fn(Job, &str, &str) -> Result<String, String>) {
+pub fn step(live: &Mutex<Live>, sched: &mut Scheduler, segments: &[Segment], now_ms: u64, chat: &dyn Fn(Job, &str, &str) -> Result<String, String>, log: &dyn Fn(&str)) {
     let Some(job) = sched.next(now_ms) else { return };
     let user = match live.lock() {
         Ok(l) => bundle(&l.chips, &l.summary, &l.actions, segments, now_ms),
@@ -421,14 +435,18 @@ pub fn step(live: &Mutex<Live>, sched: &mut Scheduler, segments: &[Segment], now
     let reply = chat(job, system, &user);
     sched.done(job, now_ms);
     let Ok(mut l) = live.lock() else { return };
+    let unreadable = |raw: &str| {
+        log(&format!("    talking points: unreadable reply: {}", raw.chars().take(200).collect::<String>().replace(['\n', '\r'], " ")));
+        UNREADABLE.to_string()
+    };
     let outcome = match (job, reply) {
         (_, Err(_)) => Err(UNREACHABLE.to_string()),
-        (Job::Suggest, Ok(raw)) => parse_suggestions(&raw).map(|sug| {
+        (Job::Suggest, Ok(raw)) => parse_suggestions(&raw).map_err(|_| unreadable(&raw)).map(|sug| {
             if !sug.items.is_empty() {
                 l.suggestions = Some(sug);
             }
         }),
-        (Job::Notes, Ok(raw)) => parse_notes(&raw).map(|notes| {
+        (Job::Notes, Ok(raw)) => parse_notes(&raw).map_err(|_| unreadable(&raw)).map(|notes| {
             if !notes.summary.is_empty() {
                 l.summary = notes.summary;
             }
@@ -444,41 +462,67 @@ pub fn step(live: &Mutex<Live>, sched: &mut Scheduler, segments: &[Segment], now
     }
 }
 
-pub fn spawn(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>) -> Arc<Mutex<Live>> {
-    start(s, physical_memory(), meeting, stop)
+pub fn spawn(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>, dir: std::path::PathBuf) -> Arc<Mutex<Live>> {
+    start(s, physical_memory(), meeting, stop, crate::settings::load_settings, json_chat, move |line: &str| crate::meeting::log(&dir, line))
 }
 
-fn start(s: Settings, memory: u64, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>) -> Arc<Mutex<Live>> {
+fn json_chat(s: &Settings, job: Job, system: &str, user: &str) -> Result<String, String> {
+    let model = Some(s.meeting_model.trim()).filter(|m| !m.is_empty());
+    match job {
+        Job::Suggest => crate::engines::chat_json(s, model, system, user, "suggestions", &suggestions_schema()),
+        Job::Notes => crate::engines::chat_json(s, model, system, user, "notes", &notes_schema()),
+    }
+}
+
+fn start(
+    s: Settings,
+    memory: u64,
+    meeting: Arc<Mutex<crate::meeting::Live>>,
+    stop: Arc<AtomicBool>,
+    current: impl Fn() -> Settings + Send + 'static,
+    chat: impl Fn(&Settings, Job, &str, &str) -> Result<String, String> + Send + 'static,
+    log: impl Fn(&str) + Send + 'static,
+) -> Arc<Mutex<Live>> {
     let gate = availability(&s, memory);
     let ready = gate == Availability::Ready;
-    let live = Arc::new(Mutex::new(Live { availability: Some(gate), ..Live::default() }));
+    let live = Arc::new(Mutex::new(Live { availability: Some(gate), was_ready: ready, ..Live::default() }));
     if ready {
         let live = live.clone();
-        std::thread::spawn(move || run(s, meeting, stop, live));
+        std::thread::spawn(move || {
+            let mut s = s;
+            let mut checked = std::time::Instant::now();
+            let mut sched = Scheduler::new();
+            let mut seen = 0;
+            while !stop.load(Ordering::Relaxed) {
+                if checked.elapsed().as_millis() >= RECHECK_MS {
+                    checked = std::time::Instant::now();
+                    s = current();
+                    let gate = availability(&s, memory);
+                    if gate != Availability::Ready {
+                        if let Ok(mut l) = live.lock() {
+                            l.availability = Some(gate);
+                        }
+                        return;
+                    }
+                }
+                let chat = |job: Job, system: &str, user: &str| chat(&s, job, system, user);
+                let Ok((segments, now_ms)) = meeting.lock().map(|m| (m.segments.clone(), (m.elapsed * 1000.0) as u64)) else { return };
+                for _ in seen..segments.len() {
+                    sched.on_segment();
+                }
+                seen = segments.len();
+                step(&live, &mut sched, &segments, now_ms, &chat, &log);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
     }
     live
 }
 
-fn run(s: Settings, meeting: Arc<Mutex<crate::meeting::Live>>, stop: Arc<AtomicBool>, live: Arc<Mutex<Live>>) {
-    let model = Some(s.meeting_model.trim()).filter(|m| !m.is_empty());
-    let chat = |job: Job, system: &str, user: &str| match job {
-        Job::Suggest => crate::engines::chat_json(&s, model, system, user, "suggestions", &suggestions_schema()),
-        Job::Notes => crate::engines::chat_json(&s, model, system, user, "notes", &notes_schema()),
-    };
-    let mut sched = Scheduler::new();
-    let mut seen = 0;
-    while !stop.load(Ordering::Relaxed) {
-        let Ok((segments, now_ms)) = meeting.lock().map(|m| (m.segments.clone(), (m.elapsed * 1000.0) as u64)) else { return };
-        for _ in seen..segments.len() {
-            sched.on_segment();
-        }
-        seen = segments.len();
-        step(&live, &mut sched, &segments, now_ms, &chat);
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
-}
-
 pub fn save(dir: &Path, live: &Live) {
+    if !live.was_ready {
+        return;
+    }
     if let Ok(json) = serde_json::to_string_pretty(live) {
         let _ = std::fs::write(dir.join("talking_points.json"), json);
     }
@@ -503,13 +547,17 @@ mod tests {
     }
 
     fn run_step(live: &Mutex<Live>, job: Job, reply: Result<&str, &str>) -> Vec<(Job, String, String)> {
+        run_step_logged(live, job, reply, &|_| {})
+    }
+
+    fn run_step_logged(live: &Mutex<Live>, job: Job, reply: Result<&str, &str>, log: &dyn Fn(&str)) -> Vec<(Job, String, String)> {
         let mut sched = if job == Job::Suggest { suggesting() } else { due_for_notes() };
         let calls = RefCell::new(vec![]);
         let segs = [seg(29_000, "them", "When can you ship the beta?")];
         step(live, &mut sched, &segs, 30_000, &|j, system, user| {
             calls.borrow_mut().push((j, system.to_string(), user.to_string()));
             reply.map(str::to_string).map_err(str::to_string)
-        });
+        }, log);
         calls.into_inner()
     }
 
@@ -596,7 +644,82 @@ mod tests {
         let l = live.lock().unwrap();
         assert_eq!(l.summary, "Beta ships Friday");
         assert_eq!(l.actions.len(), 1);
-        assert!(l.status.is_some());
+        assert_eq!(l.status.as_deref(), Some("The model's answer couldn't be read."));
+    }
+
+    #[test]
+    fn a_reply_that_cannot_be_read_is_logged_cut_to_200_chars() {
+        let live = Mutex::new(Live::default());
+        let logged = RefCell::new(String::new());
+        let raw = format!("nope\n{}", "x".repeat(500));
+        run_step_logged(&live, Job::Suggest, Ok(&raw), &|l| logged.borrow_mut().push_str(l));
+        let logged = logged.into_inner();
+        assert!(logged.contains("nope"), "{logged}");
+        assert!(!logged.contains('\n'));
+        assert!(logged.len() < 300, "{}", logged.len());
+    }
+
+    #[test]
+    fn an_action_of_fewer_than_two_words_is_dropped() {
+        let mut l = vec![];
+        merge_actions(&mut l, vec![act("tom", "Tom"), act("Raj", "list renewing contracts")]);
+        let whats: Vec<_> = l.iter().map(|t| t.action.what.as_str()).collect();
+        assert_eq!(whats, ["list renewing contracts"]);
+    }
+
+    #[test]
+    fn save_skips_a_meeting_where_talking_points_never_ran() {
+        let dir = std::env::temp_dir().join(format!("opendictate-talking-never-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        save(&dir, &Live { availability: Some(Availability::NeedsMemory), ..Default::default() });
+        let written = dir.join("talking_points.json").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!written);
+    }
+
+    #[test]
+    fn withdrawing_the_cloud_opt_in_mid_meeting_stops_sending() {
+        use std::sync::atomic::AtomicUsize;
+        let mut s = settings(TextEngine::OpenAiCompatible, "https://api.groq.com/openai/v1");
+        s.talking_cloud_host = "api.groq.com".into();
+        let opted = Arc::new(AtomicBool::new(true));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let current = {
+            let (s, opted) = (s.clone(), opted.clone());
+            move || {
+                let mut now = s.clone();
+                if !opted.load(Ordering::Relaxed) {
+                    now.talking_cloud_host.clear();
+                }
+                now
+            }
+        };
+        let chat = {
+            let calls = calls.clone();
+            move |_: &Settings, _: Job, _: &str, _: &str| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(ASKED.to_string())
+            }
+        };
+        let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let live = start(s, 8 * GIB, meeting.clone(), stop.clone(), current, chat, |_| {});
+        let wait_for = |done: &dyn Fn() -> bool| {
+            let began = std::time::Instant::now();
+            while !done() && began.elapsed().as_secs() < 5 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
+        meeting.lock().unwrap().segments.push(seg(0, "them", "first"));
+        wait_for(&|| calls.load(Ordering::Relaxed) > 0);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        opted.store(false, Ordering::Relaxed);
+        wait_for(&|| live.lock().unwrap().availability != Some(Availability::Ready));
+        meeting.lock().unwrap().segments.push(seg(1, "them", "second"));
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "the transcript was sent after the opt-out");
+        assert_eq!(live.lock().unwrap().availability, Some(Availability::NeedsCloudOptIn { host: "api.groq.com".into() }));
     }
 
     #[test]
@@ -625,7 +748,8 @@ mod tests {
         let s = settings(TextEngine::Ollama, &format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port()));
         let meeting = Arc::new(Mutex::new(crate::meeting::Live { segments: vec![seg(0, "them", "hello?")], ..Default::default() }));
         let stop = Arc::new(AtomicBool::new(false));
-        let live = start(s, 8 * GIB, meeting, stop.clone());
+        let current = s.clone();
+        let live = start(s, 8 * GIB, meeting, stop.clone(), move || current.clone(), json_chat, |_| {});
         std::thread::sleep(std::time::Duration::from_millis(600));
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         listener.set_nonblocking(true).unwrap();
@@ -641,7 +765,8 @@ mod tests {
         s.text_model = "m".into();
         let meeting = Arc::new(Mutex::new(crate::meeting::Live::default()));
         let stop = Arc::new(AtomicBool::new(false));
-        let live = start(s, 16 * GIB, meeting.clone(), stop.clone());
+        let current = s.clone();
+        let live = start(s, 16 * GIB, meeting.clone(), stop.clone(), move || current.clone(), json_chat, |_| {});
         meeting.lock().unwrap().segments.push(seg(0, "them", "When can you ship?"));
         let request = requests.recv_timeout(std::time::Duration::from_secs(5)).expect("no call reached the model");
         assert!(request.contains("When can you ship?"));
@@ -654,10 +779,37 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "needs LM Studio serving phi-4-mini-instruct-chat-mlx on 127.0.0.1:1234"]
+    fn lm_studio_replies_to_a_direct_question_and_finds_every_action() {
+        let mut s = settings(TextEngine::OpenAiCompatible, "http://127.0.0.1:1234/v1");
+        s.text_model = "phi-4-mini-instruct-chat-mlx".into();
+        let chat = |job: Job, system: &str, user: &str| {
+            let raw = json_chat(&s, job, system, user);
+            println!("raw {job:?}: {raw:?}");
+            raw
+        };
+        let segs = [
+            seg(1_000, "both", "Tom, could you send me the cost estimate by Friday?"),
+            seg(5_000, "both", "Also, we decided to meter usage through Stripe."),
+            seg(9_000, "both", "Raj will list the renewing annual contracts."),
+        ];
+        let live = Mutex::new(Live::default());
+        step(&live, &mut suggesting(), &segs[..1], 2_000, &chat, &|l| println!("log: {l}"));
+        step(&live, &mut due_for_notes(), &segs, 30_000, &chat, &|l| println!("log: {l}"));
+        let l = live.lock().unwrap();
+        let sug = l.suggestions.clone().unwrap_or_default();
+        println!("suggestions: {sug:?}\nactions: {:?}\nsummary: {}\nstatus: {:?}", l.actions.iter().map(|t| &t.action).collect::<Vec<_>>(), l.summary, l.status);
+        assert!(sug.items.iter().any(|i| i.kind == Kind::Reply), "no reply to a direct question");
+        assert!(l.actions.iter().all(|t| t.action.what.split_whitespace().count() >= 2));
+        assert!(l.actions.iter().any(|t| t.action.who.to_lowercase().contains("raj")), "Raj's action is missing");
+        assert!(!l.actions.iter().any(|t| t.action.what.contains("Stripe")), "a decision was listed as an action");
+    }
+
+    #[test]
     fn save_writes_talking_points_json_next_to_the_transcript() {
         let dir = std::env::temp_dir().join(format!("opendictate-talking-save-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut live = Live { summary: "Beta ships Friday".into(), ..Default::default() };
+        let mut live = Live { summary: "Beta ships Friday".into(), was_ready: true, ..Default::default() };
         merge_actions(&mut live.actions, vec![act("you", "send the build")]);
         live.status = Some("Can't reach the text model. Check it in Models.".into());
         save(&dir, &live);
@@ -752,7 +904,7 @@ mod tests {
         assert_eq!(l.len(), 1);
         assert!(!l[0].new);
         let mut l = vec![];
-        merge_actions(&mut l, vec![act("A", "x"), act("A", "X")]);
+        merge_actions(&mut l, vec![act("A", "ship x"), act("A", "Ship X")]);
         assert_eq!(l.len(), 1);
         assert!(l[0].new);
     }
@@ -760,16 +912,16 @@ mod tests {
     #[test]
     fn merging_keeps_existing_actions_in_place() {
         let mut l = vec![];
-        merge_actions(&mut l, vec![act("A", "one"), act("A", "two")]);
-        merge_actions(&mut l, vec![act("A", "three"), act("A", "one")]);
+        merge_actions(&mut l, vec![act("A", "do one"), act("A", "do two")]);
+        merge_actions(&mut l, vec![act("A", "do three"), act("A", "do one")]);
         let whats: Vec<_> = l.iter().map(|t| t.action.what.as_str()).collect();
-        assert_eq!(whats, ["one", "two", "three"]);
+        assert_eq!(whats, ["do one", "do two", "do three"]);
     }
 
     #[test]
     fn items_marked_new_lose_the_mark_on_the_next_merge() {
         let mut l = vec![];
-        merge_actions(&mut l, vec![act("A", "one")]);
+        merge_actions(&mut l, vec![act("A", "do one")]);
         assert!(l[0].new);
         merge_actions(&mut l, vec![]);
         assert!(!l[0].new);
