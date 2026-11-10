@@ -70,13 +70,14 @@ impl Cutter {
 
     pub fn push(&mut self, mine: &[f32], theirs: &[f32], split_ok: bool) -> Vec<Stretch> {
         self.split_ok = split_ok;
-        if theirs.is_empty() && self.pending_theirs.is_empty() {
-            self.pending_theirs.resize(self.pending_mine.len() + mine.len(), 0.0);
-        } else if mine.is_empty() && self.pending_mine.is_empty() {
-            self.pending_mine.resize(self.pending_theirs.len() + theirs.len(), 0.0);
-        }
         self.pending_mine.extend_from_slice(mine);
         self.pending_theirs.extend_from_slice(theirs);
+        if theirs.is_empty() {
+            self.pending_theirs.resize(self.pending_mine.len().max(self.pending_theirs.len()), 0.0);
+        }
+        if mine.is_empty() {
+            self.pending_mine.resize(self.pending_theirs.len().max(self.pending_mine.len()), 0.0);
+        }
 
         let mut out = Vec::new();
         let whole = self.pending_mine.len().min(self.pending_theirs.len()) / self.frame * self.frame;
@@ -89,12 +90,12 @@ impl Cutter {
     }
 
     pub fn flush(&mut self) -> Option<Stretch> {
-        let n = self.pending_mine.len().min(self.pending_theirs.len());
-        self.mine.extend(self.pending_mine.drain(..n));
-        self.theirs.extend(self.pending_theirs.drain(..n));
-        self.pending_mine.clear();
-        self.pending_theirs.clear();
-        self.take_stretch(self.frames + 1)
+        let n = self.pending_mine.len().max(self.pending_theirs.len());
+        self.pending_mine.resize(n, 0.0);
+        self.pending_theirs.resize(n, 0.0);
+        self.mine.append(&mut self.pending_mine);
+        self.theirs.append(&mut self.pending_theirs);
+        self.take_stretch(self.mine.len().div_ceil(self.frame))
     }
 
     fn frame_in(&mut self, fa: &[f32], fb: &[f32], out: &mut Vec<Stretch>) {
@@ -297,11 +298,26 @@ mod tests {
     }
 
     #[test]
+    fn a_mic_only_stream_keeps_flowing_across_pushes_that_are_not_whole_frames() {
+        let mut c = Cutter::new(RATE);
+        let mic = cat(&[speech(1.25), silence(0.75)]);
+        let out: Vec<_> = mic.chunks(12_000).flat_map(|m| c.push(m, &[], false)).collect();
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn flush_keeps_the_tail_of_the_longer_side() {
+        let mut c = Cutter::new(RATE);
+        c.push(&speech(1.0)[..2_000], &silence(1.0)[..1_000], true);
+        assert_eq!(c.flush().expect("stretch").samples.len(), 2_000);
+    }
+
+    #[test]
     fn a_turn_cut_does_not_count_the_new_speakers_frames_as_voiced_in_the_old_stretch() {
         let mine = cat(&[silence(2.0), speech(2.0)]);
         let theirs = cat(&[speech(2.0), silence(2.0)]);
         let out = cut_all(&mine, &theirs, true);
-        assert!((out[0].voiced_secs - 2.0).abs() < 0.05, "{}", out[0].voiced_secs);
+        assert!((out[0].voiced_secs - 2.0).abs() <= 0.02, "{}", out[0].voiced_secs);
     }
 
     #[test]
