@@ -327,7 +327,7 @@ fn handle_stretch(
 ) -> Result<Option<Segment>, String> {
     let samples = to_16k(&st.samples, rate);
     let (loudest, level) = (peak(&samples), rms(&samples));
-    log(dir, &format!("{index:03} {:5.1}s {:<4} peak {loudest:.3} rms {level:.4}", st.secs, st.voice));
+    log(dir, &format!("{index:03} {:5.1}s {:<4} peak {loudest:.3} rms {level:.4} voiced {:.1}s", st.secs, st.voice, st.voiced_secs));
     if !crate::cut::worth_transcribing(loudest, level, st.voiced_secs) {
         log(dir, "    skipped: too quiet to be speech");
         return Ok(None);

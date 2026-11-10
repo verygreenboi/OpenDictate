@@ -1,5 +1,5 @@
 const FRAME_SECS: f64 = 0.02;
-const VOICED_RMS: f32 = 0.01;
+const VOICED_RMS: f32 = 0.004;
 const PAUSE_FRAMES: usize = 25;
 const FORCED_CUT_FRAMES: usize = 750;
 const TURN_FRAMES: usize = 15;
@@ -182,7 +182,7 @@ impl Cutter {
 }
 
 pub fn worth_transcribing(peak: f32, rms: f32, voiced_secs: f32) -> bool {
-    peak >= 0.03 && rms >= 0.002 && (peak >= 0.10 || voiced_secs >= 1.0)
+    peak >= 0.03 && rms >= 0.002 && (peak >= 0.10 || (peak >= 0.05 && voiced_secs >= 0.2) || voiced_secs >= 1.0)
 }
 
 #[cfg(test)]
@@ -216,7 +216,7 @@ mod tests {
     fn cuts_after_half_a_second_of_silence_following_speech() {
         let theirs = cat(&[speech(2.0), silence(0.6)]);
         let out = Cutter::new(RATE).push(&silence(2.6), &theirs, true);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
         assert_eq!(out[0].voice, "them");
         assert!((2.0..2.6).contains(&out[0].secs), "{}", out[0].secs);
     }
@@ -225,7 +225,7 @@ mod tests {
     fn does_not_cut_on_a_pause_shorter_than_half_a_second() {
         let theirs = cat(&[speech(1.0), silence(0.3), speech(1.0)]);
         let out = cut_all(&silence(2.3), &theirs, true);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
         let mine = cat(&[silence(1.0), speech(0.2), silence(0.3), speech(0.2)]);
         let theirs = cat(&[speech(1.0), silence(0.7)]);
         let out = cut_all(&mine, &theirs, true);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
     }
 
     #[test]
@@ -259,7 +259,7 @@ mod tests {
         let mine = cat(&[silence(2.0), speech(0.2), silence(2.0)]);
         let theirs = cat(&[speech(2.0), silence(0.2), speech(2.0)]);
         let out = cut_all(&mine, &theirs, true);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
         assert_eq!(out[0].voice, "them");
     }
 
@@ -291,7 +291,7 @@ mod tests {
         let mut c = Cutter::new(RATE);
         let mic = cat(&[speech(1.0), silence(0.6)]);
         let out = c.push(&mic, &[], false);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
         assert_eq!(out[0].voice, "both");
     }
 
@@ -300,7 +300,7 @@ mod tests {
         let mut c = Cutter::new(RATE);
         let mic = cat(&[speech(1.25), silence(0.75)]);
         let out: Vec<_> = mic.chunks(12_000).flat_map(|m| c.push(m, &[], false)).collect();
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
         let mine = cat(&[silence(2.0), speech(2.0)]);
         let theirs = cat(&[speech(2.0), silence(2.0)]);
         let out = cut_all(&mine, &theirs, false);
-        assert_eq!(out.len(), 1);
+        assert_eq!(out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>().len(), 1, "{:?}", out.iter().map(|s| (s.secs, s.voiced_secs)).collect::<Vec<_>>());
         assert_eq!(out[0].voice, "both");
     }
 
@@ -367,5 +367,65 @@ mod tests {
         assert!(!worth_transcribing(0.021, 0.002, 0.0));
         assert!(worth_transcribing(0.08, 0.01, 1.2));
         assert!(!worth_transcribing(0.02, 0.01, 2.0));
+    }
+
+    fn fixture(name: &str, peak: f32) -> Vec<f32> {
+        let bytes = std::fs::read(format!("{}/tests/fixtures/{name}.wav", env!("CARGO_MANIFEST_DIR"))).unwrap();
+        let at = bytes.windows(4).position(|w| w == b"data").unwrap() + 8;
+        let raw: Vec<f32> = bytes[at..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32).collect();
+        let loudest = raw.iter().fold(0f32, |m, x| m.max(x.abs()));
+        raw.iter().map(|x| x / loudest * peak).collect()
+    }
+
+    fn stretches_of_quiet_speech(name: &str) -> Vec<Stretch> {
+        let mut c = Cutter::new(16_000.0);
+        let theirs = [fixture(name, 0.06), vec![0.0; 16_000]].concat();
+        let silent = vec![0.0; theirs.len()];
+        let mut out = c.push(&silent, &theirs, true);
+        out.extend(c.flush());
+        out
+    }
+
+    fn assert_one_stretch_worth_transcribing(name: &str) {
+        let out = stretches_of_quiet_speech(name);
+        assert_eq!(out.len(), 1);
+        assert_worth_transcribing(&out[0]);
+    }
+
+    fn assert_worth_transcribing(st: &Stretch) {
+        let peak = st.samples.iter().fold(0f32, |m, x| m.max(x.abs()));
+        assert!(worth_transcribing(peak, rms(&st.samples), st.voiced_secs), "voiced {}", st.voiced_secs);
+    }
+
+    #[test]
+    fn a_quiet_spoken_question_comes_out_as_one_stretch_worth_transcribing() {
+        assert_one_stretch_worth_transcribing("question");
+    }
+
+    #[test]
+    fn every_stretch_of_a_quiet_spoken_short_answer_is_worth_transcribing() {
+        let out = stretches_of_quiet_speech("yes");
+        assert!(!out.is_empty());
+        out.iter().for_each(assert_worth_transcribing);
+    }
+
+    #[test]
+    fn low_level_noise_is_never_worth_transcribing() {
+        let mut seed = 12345u32;
+        let noise: Vec<f32> = (0..16_000 * 3)
+            .map(|_| {
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                ((seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5) * 0.0104
+            })
+            .enumerate()
+            .map(|(i, x)| if i % 4000 == 0 { 0.03 } else { x })
+            .collect();
+        let mut c = Cutter::new(16_000.0);
+        let mut out = c.push(&vec![0.0; noise.len()], &noise, true);
+        out.extend(c.flush());
+        for st in out {
+            let peak = st.samples.iter().fold(0f32, |m, x| m.max(x.abs()));
+            assert!(!worth_transcribing(peak, rms(&st.samples), st.voiced_secs));
+        }
     }
 }
