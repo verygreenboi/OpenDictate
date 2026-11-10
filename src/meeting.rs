@@ -252,7 +252,7 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
     let mut cutter = crate::cut::Cutter::new(rate);
     let mut index = 0usize;
     let started = std::time::Instant::now();
-    let server = std::cell::RefCell::new(start_server(&s, &dir));
+    let server = std::cell::RefCell::new(start_server(&s, &dir, &stop));
     let transcribe = |wav: &[u8]| {
         let mut server = server.borrow_mut();
         let had_server = server.is_some();
@@ -312,11 +312,12 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
     }
 }
 
-fn start_server(s: &Settings, dir: &Path) -> Option<crate::whisper_server::WhisperServer> {
+fn start_server(s: &Settings, dir: &Path, stop: &AtomicBool) -> Option<crate::whisper_server::WhisperServer> {
     if s.speech_engine != crate::settings::SpeechEngine::WhisperLocal {
         return None;
     }
-    crate::whisper_server::WhisperServer::start(s)
+    crate::whisper_server::WhisperServer::start(s, stop, dir)
+        .inspect(|_| log(dir, "whisper-server ready"))
         .inspect_err(|e| log(dir, &format!("whisper-server not used, falling back to whisper-cli: {e}")))
         .ok()
 }

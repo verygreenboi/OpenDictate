@@ -1,5 +1,6 @@
 use crate::settings::{Settings, SpeechEngine};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub fn find_server_bin(whisper_cli: &str) -> Option<PathBuf> {
@@ -9,13 +10,22 @@ pub fn find_server_bin(whisper_cli: &str) -> Option<PathBuf> {
     beside.or_else(|| crate::engines::find_whisper_bin("whisper-server"))
 }
 
+fn inference_fields<'a>(language: &'a str, prompt: &'a str) -> Vec<(&'static str, &'a str)> {
+    let language = if language.is_empty() { "auto" } else { language };
+    let mut fields = vec![("response_format", "json"), ("language", language)];
+    if !prompt.is_empty() {
+        fields.push(("prompt", prompt));
+    }
+    fields
+}
+
 pub struct WhisperServer {
     child: Option<std::process::Child>,
     port: u16,
 }
 
 impl WhisperServer {
-    pub fn start(s: &Settings) -> Result<WhisperServer, String> {
+    pub fn start(s: &Settings, stop: &AtomicBool, dir: &Path) -> Result<WhisperServer, String> {
         let bin = find_server_bin(&s.whisper_bin).ok_or("whisper-server not found")?;
         if !Path::new(&s.whisper_model).is_file() {
             return Err("No speech model chosen".into());
@@ -24,24 +34,28 @@ impl WhisperServer {
             .and_then(|l| l.local_addr())
             .map_err(|e| format!("no free port: {e}"))?
             .port();
+        let stderr = std::fs::File::create(dir.join("whisper-server.log")).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
         let child = std::process::Command::new(bin)
             .arg("-m")
             .arg(&s.whisper_model)
             .args(["--host", "127.0.0.1", "--port", &port.to_string()])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(stderr)
             .spawn()
             .map_err(|e| format!("could not run whisper-server: {e}"))?;
         let mut server = WhisperServer { child: Some(child), port };
-        server.wait_until_ready()?;
+        server.wait_until_ready(stop)?;
         Ok(server)
     }
 
-    fn wait_until_ready(&mut self) -> Result<(), String> {
+    fn wait_until_ready(&mut self, stop: &AtomicBool) -> Result<(), String> {
         let probe = crate::engines::agent(2);
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
+            if stop.load(Ordering::Relaxed) {
+                return Err("stopped while whisper-server was loading".into());
+            }
             if let Some(status) = self.child.as_mut().and_then(|c| c.try_wait().ok().flatten()) {
                 return Err(format!("whisper-server exited: {status}"));
             }
@@ -54,15 +68,8 @@ impl WhisperServer {
     }
 
     pub fn transcribe(&self, s: &Settings, wav: &[u8]) -> Result<String, String> {
-        let lang = s.language.trim();
         let prompt = crate::engines::dictionary_prompt(s);
-        let mut fields = vec![("response_format", "json")];
-        if !lang.is_empty() && lang != "auto" {
-            fields.push(("language", lang));
-        }
-        if !prompt.is_empty() {
-            fields.push(("prompt", &prompt));
-        }
+        let fields = inference_fields(s.language.trim(), &prompt);
         let (content_type, body) = crate::engines::multipart(&fields, wav);
         let resp = crate::engines::agent(180)
             .post(format!("http://127.0.0.1:{}/inference", self.port))
@@ -159,6 +166,45 @@ mod tests {
         assert_eq!(transcribe_stretch(&mut server, &Settings::default(), b"w", &cli), Ok("cli".to_string()));
     }
 
+    #[test]
+    fn asks_the_server_to_detect_the_language_when_set_to_auto() {
+        for lang in ["", "auto"] {
+            assert!(inference_fields(lang, "").contains(&("language", "auto")));
+        }
+    }
+
+    #[test]
+    fn passes_an_explicit_language_through() {
+        let fields = inference_fields("fr", "Vocabulary: x.");
+        assert!(fields.contains(&("language", "fr")));
+        assert!(fields.contains(&("prompt", "Vocabulary: x.")));
+    }
+
+    #[test]
+    fn stopping_while_the_server_loads_returns_promptly() {
+        let dir = temp_dir("loading");
+        let cli = executable(&dir, "whisper-cli");
+        let server = dir.join("whisper-server");
+        std::fs::write(&server, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let model = dir.join("model.bin");
+        std::fs::write(&model, "x").unwrap();
+        let mut s = Settings::default();
+        s.whisper_bin = cli.to_str().unwrap().into();
+        s.whisper_model = model.to_str().unwrap().into();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let began = Instant::now();
+        let result = WhisperServer::start(&s, &stop, &dir);
+        assert!(result.is_err());
+        assert!(began.elapsed() < Duration::from_secs(2), "{:?}", began.elapsed());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn real_settings() -> Settings {
         let mut s = Settings::default();
         s.whisper_model = std::env::var("WHISPER_MODEL").expect("set WHISPER_MODEL to a ggml model file");
@@ -173,7 +219,7 @@ mod tests {
     #[ignore = "needs WHISPER_MODEL and whisper-server"]
     fn transcribes_a_wav_through_a_real_server() {
         let s = real_settings();
-        let server = WhisperServer::start(&s).unwrap();
+        let server = WhisperServer::start(&s, &AtomicBool::new(false), &std::env::temp_dir()).unwrap();
         let text = server.transcribe(&s, &fixture()).unwrap();
         assert!(text.to_lowercase().contains("cost estimate"), "{text}");
     }
@@ -183,7 +229,7 @@ mod tests {
     fn times_server_calls_against_cli_calls() {
         let s = real_settings();
         let wav = fixture();
-        let server = WhisperServer::start(&s).unwrap();
+        let server = WhisperServer::start(&s, &AtomicBool::new(false), &std::env::temp_dir()).unwrap();
         server.transcribe(&s, &wav).unwrap();
         let t = std::time::Instant::now();
         for _ in 0..10 {
