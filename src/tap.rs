@@ -441,6 +441,14 @@ impl SystemCapture {
         }
     }
 
+    pub fn current_rate(&self) -> f64 {
+        let mut rate: f64 = 0.0;
+        unsafe {
+            get(self.device, kAudioDevicePropertyNominalSampleRate, &mut rate);
+        }
+        rate
+    }
+
     pub fn mic_channels(&self) -> usize {
         unsafe {
             let sink = &*self.sink;

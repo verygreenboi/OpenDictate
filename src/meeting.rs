@@ -314,6 +314,7 @@ fn run(cap: SystemCapture, mut mic: Option<MicStream>, dir: PathBuf, live: Arc<M
     let mut resampler = mic.as_ref().map(|m| Resampler::new(m.rate(), rate));
     let mut mic_failed = false;
     let mut last_reopen = None;
+    let mut rate_changed = false;
     let mut levels = (0f32, 0f32);
     let mut last_levels = std::time::Instant::now();
     loop {
@@ -334,6 +335,14 @@ fn run(cap: SystemCapture, mut mic: Option<MicStream>, dir: PathBuf, live: Arc<M
             l.peak = l.peak.max(peak(mine)).max(peak(&call.theirs));
         }
         levels = (levels.0.max(peak(mine)), levels.1.max(peak(&call.theirs)));
+        let now_rate = cap.current_rate();
+        if !rate_changed && call_rate_changed(rate, now_rate) {
+            rate_changed = true;
+            log(&dir, &format!("call audio changed from {rate} Hz to {now_rate} Hz"));
+            if let Ok(mut l) = live.lock() {
+                l.warning = Some("Call audio changed format; restart the meeting to keep transcribing it".into());
+            }
+        }
         process(step(&mut cutter, &mut aligner, &mut resampler, call, heard, crate::tap::host_now_ns(), mic.is_some()));
         let failure = mic.as_ref().and_then(|m| m.failed()).filter(|_| !ending);
         if should_reopen(failure.is_some(), last_reopen, std::time::Instant::now()) {
@@ -388,6 +397,10 @@ const REOPEN_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn should_reopen(failed: bool, last_try: Option<std::time::Instant>, now: std::time::Instant) -> bool {
     failed && last_try.is_none_or(|t| now.duration_since(t) >= REOPEN_EVERY)
+}
+
+fn call_rate_changed(cutter_rate: f64, now_rate: f64) -> bool {
+    now_rate > 0.0 && (now_rate - cutter_rate).abs() >= 1.0
 }
 
 fn heard_you(mic: &[f32]) -> bool {
@@ -891,6 +904,15 @@ mod tests {
         assert!(should_reopen(true, ago(2_000), now));
         assert!(!should_reopen(false, None, now));
         assert!(!should_reopen(false, ago(10_000), now));
+    }
+
+    #[test]
+    fn call_audio_is_flagged_only_when_the_aggregate_really_changes_rate() {
+        assert!(call_rate_changed(48_000.0, 24_000.0));
+        assert!(call_rate_changed(48_000.0, 44_100.0));
+        assert!(!call_rate_changed(48_000.0, 48_000.0));
+        assert!(!call_rate_changed(48_000.0, 48_000.4));
+        assert!(!call_rate_changed(48_000.0, 0.0));
     }
 
     #[test]
