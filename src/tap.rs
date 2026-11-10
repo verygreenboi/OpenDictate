@@ -18,7 +18,6 @@ use objc2_core_foundation::{CFDictionary, CFString};
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use std::ffi::c_void;
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Everything the IO proc needs. Handed over as the client pointer, and
@@ -38,14 +37,6 @@ struct Sink {
     /// How many belong to the tap. Together these say what the device should
     /// be handing over; when it hands over something else, the split is off.
     tap_channels: usize,
-    /// Cleared the moment the channel layout stops matching what was opened.
-    ///
-    /// A 20 minute meeting came back with the two sides bit-identical for 70
-    /// of its 76 chunks: the microphone had dropped out of the aggregate and
-    /// the tap's stereo pair was being cut in half and labelled "you" and
-    /// "them". Splitting on a layout that no longer holds does not produce an
-    /// error, it produces a confident lie, so it is checked every callback.
-    split_ok: AtomicBool,
     /// Set while diagnosing: the loudest sample seen on each channel.
     probe: Mutex<Vec<f32>>,
 }
@@ -56,8 +47,6 @@ pub struct SystemCapture {
     proc_id: AudioDeviceIOProcID,
     sink: *mut Arc<Sink>,
     pub rate: f64,
-    /// Whether the microphone made it into the same device, or only the tap.
-    pub has_mic: bool,
 }
 
 /// One pass of audio, with the two sides kept apart.
@@ -77,6 +66,7 @@ struct MachTimebase {
 
 unsafe extern "C" {
     fn mach_timebase_info(info: *mut MachTimebase) -> i32;
+    fn mach_absolute_time() -> u64;
 }
 
 fn timebase() -> (u32, u32) {
@@ -87,6 +77,12 @@ fn timebase() -> (u32, u32) {
 
 pub(crate) fn host_to_ns(ticks: u64, numer: u32, denom: u32) -> u64 {
     (ticks as u128 * numer as u128 / denom as u128) as u64
+}
+
+pub(crate) fn host_now_ns() -> u64 {
+    static TIMEBASE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+    let (numer, denom) = *TIMEBASE.get_or_init(timebase);
+    host_to_ns(unsafe { mach_absolute_time() }, numer, denom)
 }
 
 // The Core Audio ids are plain integers and the sink is reference counted;
@@ -154,9 +150,6 @@ unsafe extern "C-unwind" fn io_proc(
     // with. Anything else and we do not know whose channel is whose, so
     // everything goes down one side and the chunk is marked as mixed.
     let split = sink.mic_channels > 0 && channels == sink.mic_channels + sink.tap_channels;
-    if !split {
-        sink.split_ok.store(false, Ordering::Relaxed);
-    }
 
     let mut mic: Vec<Vec<f32>> = Vec::new();
     let mut theirs = vec![0f32; frames];
@@ -392,7 +385,6 @@ impl SystemCapture {
                 timebase: timebase(),
                 mic_channels,
                 tap_channels,
-                split_ok: AtomicBool::new(mic_channels > 0 && tap_channels > 0),
                 probe: Mutex::new(Vec::new()),
             })));
             let mut proc_id: AudioDeviceIOProcID = None;
@@ -415,7 +407,7 @@ impl SystemCapture {
                 AudioHardwareDestroyProcessTap(tap);
                 return Err(format!("system audio was refused (start {})", status(st)));
             }
-            Ok(Self { tap, device, proc_id, sink, rate, has_mic })
+            Ok(Self { tap, device, proc_id, sink, rate })
         }
     }
 
@@ -451,14 +443,6 @@ impl SystemCapture {
         }
     }
 
-    /// Whether the two sides can still be told apart. False once the device
-    /// has handed over a layout other than the one it was opened with.
-    pub fn split_ok(&self) -> bool {
-        unsafe {
-            let sink = &*self.sink;
-            sink.split_ok.load(Ordering::Relaxed)
-        }
-    }
 
     pub fn mic_channels(&self) -> usize {
         unsafe {
@@ -531,10 +515,6 @@ pub fn check(secs: u64) -> String {
 mod tests {
     use super::*;
 
-    unsafe extern "C" {
-        fn mach_absolute_time() -> u64;
-    }
-
     #[test]
     fn host_ticks_convert_to_nanoseconds_with_the_timebase() {
         assert_eq!(host_to_ns(3_000, 125, 3), 125_000);
@@ -552,12 +532,11 @@ mod tests {
         let _ = say.wait();
         let c = cap.drain();
         let peak = c.theirs.iter().fold(0f32, |m, x| m.max(x.abs()));
-        println!("rate {} has_mic {} samples {} peak {peak:.4} first_host_ns {:?}", cap.rate, cap.has_mic, c.theirs.len(), c.first_host_ns);
-        assert!(!cap.has_mic);
+        println!("rate {} mic channels {} samples {} peak {peak:.4} first_host_ns {:?}", cap.rate, cap.mic_channels(), c.theirs.len(), c.first_host_ns);
+        assert_eq!(cap.mic_channels(), 0);
         assert!(peak > 0.05, "peak {peak}");
         let first = c.first_host_ns.expect("first sample timed");
-        let (numer, denom) = timebase();
-        let now = host_to_ns(unsafe { mach_absolute_time() }, numer, denom);
+        let now = host_now_ns();
         let elapsed = before.elapsed().as_nanos() as u64;
         println!("first sample {} ms before the drain, opened {} ms before it", now.saturating_sub(first) / 1_000_000, elapsed / 1_000_000);
         assert!(first < now && now - first < elapsed + 1_000_000_000);

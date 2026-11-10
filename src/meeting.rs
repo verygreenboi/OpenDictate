@@ -17,6 +17,8 @@
 //! JSONL because a meeting in progress is appended to every few seconds: a
 //! crash truncates one line instead of corrupting the file.
 
+use crate::align::{Aligner, Resampler};
+use crate::mic::MicStream;
 use crate::settings::{self, Settings};
 use crate::tap::SystemCapture;
 use serde::{Deserialize, Serialize};
@@ -194,8 +196,9 @@ fn should_start_lm_studio(s: &Settings, memory: u64, lms_found: bool) -> bool {
 
 impl Session {
     pub fn start(s: &Settings) -> Result<Self, String> {
-        let cap = SystemCapture::start(crate::tap::default_input())?;
-        let source = if cap.has_mic { "You and everyone on the call" } else { "Everyone on the call" };
+        let mic = MicStream::start("");
+        let cap = SystemCapture::start(None)?;
+        let source = source_line(mic.is_ok());
         let started = now();
         let id = chrono::Local::now().format("%Y-%m-%d-%H%M%S").to_string();
         let dir = root().join(&id);
@@ -209,13 +212,18 @@ impl Session {
             peak: 0.0,
         };
         let _ = std::fs::write(dir.join("meta.json"), serde_json::to_string_pretty(&meta).unwrap_or_default());
+        match &mic {
+            Ok(m) => log(&dir, &format!("mic {}, call {} Hz", m.info(), cap.rate)),
+            Err(e) => log(&dir, &format!("mic not opened, recording the call only: {e}")),
+        }
+        let mic = mic.ok();
 
         let live = Arc::new(Mutex::new(Live::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let worker = std::thread::spawn({
             let (dir, live, stop) = (dir.clone(), live.clone(), stop.clone());
             let settings = s.clone();
-            move || run(cap, dir, live, stop, settings)
+            move || run(cap, mic, dir, live, stop, settings)
         });
         if should_start_lm_studio(s, crate::talking::physical_memory(), crate::lms::find().is_some()) {
             let (dir, s) = (dir.clone(), s.clone());
@@ -264,7 +272,7 @@ impl Drop for Session {
     }
 }
 
-fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<AtomicBool>, s: Settings) {
+fn run(cap: SystemCapture, mic: Option<MicStream>, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<AtomicBool>, s: Settings) {
     let rate = cap.rate;
     let mut cutter = crate::cut::Cutter::new(rate);
     let mut index = 0usize;
@@ -301,22 +309,45 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         }
     };
 
+    let mut aligner = Aligner::new(rate);
+    let mut resampler = mic.as_ref().map(|m| Resampler::new(m.rate(), rate));
+    let mut mic_failed = false;
+    let mut levels = (0f32, 0f32);
+    let mut last_levels = std::time::Instant::now();
     loop {
         let ending = stop.load(Ordering::Relaxed);
-        let mut got = cap.drain();
         if ending {
             cap.pause();
-            let last = cap.drain();
-            got.mine.extend(last.mine);
-            got.theirs.extend(last.theirs);
+            if let Some(m) = &mic {
+                m.pause();
+            }
         }
+        let call = cap.drain();
+        let heard = mic.as_ref().map(|m| m.drain());
+        let mine: &[f32] = heard.as_ref().map_or(&[], |(m, _)| m);
         if let Ok(mut l) = live.lock() {
             l.elapsed = started.elapsed().as_secs_f32();
-            l.samples += got.mine.len().max(got.theirs.len());
-            l.heard_you |= rms(&got.mine) > 0.001;
-            l.peak = l.peak.max(peak(&got.mine)).max(peak(&got.theirs));
+            l.samples += mine.len().max(call.theirs.len());
+            l.heard_you |= heard_you(mine);
+            l.peak = l.peak.max(peak(mine)).max(peak(&call.theirs));
         }
-        process(cutter.push(&got.mine, &got.theirs, cap.split_ok()));
+        levels = (levels.0.max(peak(mine)), levels.1.max(peak(&call.theirs)));
+        if let Some(e) = mic.as_ref().and_then(|m| m.failed()).filter(|_| !mic_failed) {
+            mic_failed = true;
+            log(&dir, &format!("mic stopped: {e}"));
+            if let Ok(mut l) = live.lock() {
+                l.warning = Some("Your microphone stopped".into());
+            }
+        }
+        process(step(&mut cutter, &mut aligner, &mut resampler, call, heard, crate::tap::host_now_ns(), mic.is_some()));
+        while let Some(side) = aligner.padded() {
+            log(&dir, &format!("{side} sent nothing for {} ms, padding it with silence", crate::align::HOLD_MS));
+        }
+        if last_levels.elapsed() >= std::time::Duration::from_secs(30) {
+            log(&dir, &diagnostics_line(levels.0, levels.1, aligner.offset_ms()));
+            levels = (0.0, 0.0);
+            last_levels = std::time::Instant::now();
+        }
         if ending {
             process(cutter.flush().into_iter().collect());
             if let Ok(mut l) = live.lock() {
@@ -329,6 +360,40 @@ fn run(cap: SystemCapture, dir: PathBuf, live: Arc<Mutex<Live>>, stop: Arc<Atomi
         }
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
+}
+
+fn source_line(mic_opened: bool) -> &'static str {
+    if mic_opened { "You and everyone on the call" } else { "Everyone on the call" }
+}
+
+fn heard_you(mic: &[f32]) -> bool {
+    rms(mic) > 0.001
+}
+
+fn diagnostics_line(mine_peak: f32, theirs_peak: f32, offset_ms: f32) -> String {
+    format!("levels you {mine_peak:.3} them {theirs_peak:.3} offset {offset_ms:.1} ms")
+}
+
+fn step(
+    cutter: &mut crate::cut::Cutter,
+    aligner: &mut Aligner,
+    resampler: &mut Option<Resampler>,
+    call: crate::tap::Chunk,
+    mic: Option<(Vec<f32>, Option<u64>)>,
+    now_ns: u64,
+    split_ok: bool,
+) -> Vec<crate::cut::Stretch> {
+    let Some((samples, first_host_ns)) = mic else {
+        return cutter.push(&[], &call.theirs, split_ok);
+    };
+    let samples = match resampler {
+        Some(r) => r.push(&samples),
+        None => samples,
+    };
+    aligner.push_call(&call.theirs, call.first_host_ns);
+    aligner.push_mic(&samples, first_host_ns);
+    let (mine, theirs) = aligner.take(now_ns);
+    cutter.push(&mine, &theirs, split_ok)
 }
 
 fn start_server(s: &Settings, dir: &Path, stop: &AtomicBool) -> Option<crate::whisper_server::WhisperServer> {
@@ -704,6 +769,76 @@ mod tests {
         assert_eq!(r.unwrap_err(), "boom");
         assert!(!dir.join("audio/000.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const T0: u64 = 1_000_000_000_000;
+    const TICK_NS: u64 = 250_000_000;
+
+    fn at_rate(v: &[f32], rate: f64) -> Vec<f32> {
+        crate::align::Resampler::new(16_000.0, rate).push(v)
+    }
+
+    fn silence(secs: f64, rate: f64) -> Vec<f32> {
+        vec![0.0; (secs * rate) as usize]
+    }
+
+    fn chunk(v: &[f32], k: usize, per: usize) -> (Vec<f32>, Option<u64>) {
+        let part = v.get(k * per..).unwrap_or(&[]).iter().take(per).copied().collect::<Vec<_>>();
+        let at = (!part.is_empty()).then_some(T0 + k as u64 * TICK_NS);
+        (part, at)
+    }
+
+    fn record(call: &[f32], mic: Option<(&[f32], f64)>, split_ok: bool) -> (Vec<&'static str>, bool) {
+        let mut cutter = crate::cut::Cutter::new(RATE);
+        let mut aligner = crate::align::Aligner::new(RATE);
+        let mut resampler = mic.map(|(_, r)| crate::align::Resampler::new(r, RATE));
+        let mut out = Vec::new();
+        let mut heard = false;
+        let ticks = (call.len() as f64 / RATE / 0.25).ceil() as usize + 4;
+        for k in 0..ticks {
+            let (theirs, first_host_ns) = chunk(call, k, (RATE / 4.0) as usize);
+            let got = mic.map(|(m, r)| chunk(m, k, (r / 4.0) as usize));
+            heard |= got.as_ref().is_some_and(|(m, _)| heard_you(m));
+            let call = crate::tap::Chunk { mine: Vec::new(), theirs, first_host_ns };
+            out.extend(step(&mut cutter, &mut aligner, &mut resampler, call, got, T0 + (k as u64 + 1) * TICK_NS, split_ok));
+        }
+        out.extend(cutter.flush());
+        (out.iter().map(|s| s.voice).collect(), heard)
+    }
+
+    #[test]
+    fn a_44k1_mic_and_48k_call_produce_you_and_them_stretches_in_order() {
+        let question = at_rate(&crate::cut::tests::fixture("question", 0.3), RATE);
+        let yes = at_rate(&crate::cut::tests::fixture("yes", 0.3), 44_100.0);
+        let call = [question.clone(), silence(2.0, RATE), silence(2.5, RATE)].concat();
+        let mic = [silence(question.len() as f64 / RATE + 2.0, 44_100.0), yes, silence(0.5, 44_100.0)].concat();
+        let (voices, heard) = record(&call, Some((&mic, 44_100.0)), true);
+        assert_eq!(voices, ["them", "you"]);
+        assert!(heard);
+    }
+
+    #[test]
+    fn a_meeting_without_a_mic_records_the_call_as_both() {
+        let call = [at_rate(&crate::cut::tests::fixture("question", 0.3), RATE), silence(2.0, RATE)].concat();
+        let (voices, heard) = record(&call, None, false);
+        assert_eq!(voices, ["both"]);
+        assert!(!heard);
+        assert_eq!(source_line(false), "Everyone on the call");
+        assert_eq!(source_line(true), "You and everyone on the call");
+    }
+
+    #[test]
+    fn a_silent_mic_marks_the_meeting_as_not_captured() {
+        let call = [at_rate(&crate::cut::tests::fixture("question", 0.3), RATE), silence(2.0, RATE)].concat();
+        let mic = silence(call.len() as f64 / RATE, 48_000.0);
+        let (voices, heard) = record(&call, Some((&mic, 48_000.0)), true);
+        assert_eq!(voices, ["them"]);
+        assert!(!heard);
+    }
+
+    #[test]
+    fn the_diagnostics_line_names_both_peaks_and_the_offset() {
+        assert_eq!(diagnostics_line(0.061, 0.17, 3.2), "levels you 0.061 them 0.170 offset 3.2 ms");
     }
 
     fn lm_studio_settings() -> Settings {
