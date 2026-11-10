@@ -52,7 +52,7 @@ fn ensure_with(s: &Settings, run: &dyn Fn(&[String]) -> Result<String, String>, 
         run(&args(&["server", "start"]))?;
         log("started the server");
     }
-    let loaded = parse_loaded(&run(&args(&["ps", "--json"]))?);
+    let loaded = parse_loaded(&ps_with_retry(run, Duration::from_millis(500))?);
     for step in steps(true, &loaded, model) {
         run(&step)?;
         log(&format!("loaded {model}"));
@@ -60,25 +60,42 @@ fn ensure_with(s: &Settings, run: &dyn Fn(&[String]) -> Result<String, String>, 
     Ok(())
 }
 
-fn run_command(program: &Path, args: &[String], timeout: Duration) -> Result<String, String> {
+fn ps_with_retry(run: &dyn Fn(&[String]) -> Result<String, String>, pause: Duration) -> Result<String, String> {
+    let ps = ["ps".to_string(), "--json".to_string()];
+    let mut result = run(&ps);
+    for _ in 1..10 {
+        if result.is_ok() {
+            break;
+        }
+        std::thread::sleep(pause);
+        result = run(&ps);
+    }
+    result
+}
+
+fn run_command(program: &Path, args: &[String], timeout: Duration, capture: bool) -> Result<String, String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
+    use std::sync::mpsc::{Receiver, channel};
     let shown = format!("lms {}", args.join(" "));
+    let pipe = || if capture { Stdio::piped() } else { Stdio::null() };
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(pipe())
+        .stderr(pipe())
         .spawn()
         .map_err(|e| format!("{shown}: {e}"))?;
-    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<String> {
+    fn drain(pipe: Option<impl Read + Send + 'static>) -> Receiver<String> {
+        let (tx, rx) = channel();
         std::thread::spawn(move || {
             let mut buf = String::new();
             if let Some(mut p) = pipe {
                 let _ = p.read_to_string(&mut buf);
             }
-            buf
-        })
+            let _ = tx.send(buf);
+        });
+        rx
     }
     let (out, err) = (drain(child.stdout.take()), drain(child.stderr.take()));
     let deadline = std::time::Instant::now() + timeout;
@@ -93,17 +110,25 @@ fn run_command(program: &Path, args: &[String], timeout: Duration) -> Result<Str
             None => std::thread::sleep(Duration::from_millis(50)),
         }
     };
-    let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
-    if status.success() { Ok(out) } else { Err(format!("{shown}: {}", err.trim())) }
+    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    let (Ok(out), Ok(err)) = (out.recv_timeout(left), err.recv_timeout(left)) else {
+        return Err(format!("{shown}: output pipe still held open after {}s", timeout.as_secs_f32()));
+    };
+    if status.success() { Ok(out) } else { Err(format!("{shown}: exit {status}: {}", err.trim())) }
 }
 
 fn exclusive(flag: &AtomicBool, work: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    struct Release<'a>(&'a AtomicBool);
+    impl Drop for Release<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
+        }
+    }
     if flag.swap(true, Ordering::SeqCst) {
         return Err("already starting".into());
     }
-    let result = work();
-    flag.store(false, Ordering::SeqCst);
-    result
+    let _release = Release(flag);
+    work()
 }
 
 static ENSURING: AtomicBool = AtomicBool::new(false);
@@ -114,8 +139,9 @@ pub fn ensure(s: &Settings, log: &dyn Fn(&str)) -> Result<(), String> {
         ensure_with(
             s,
             &|args| {
-                let long = args.first().is_some_and(|a| a == "load");
-                run_command(&lms, args, Duration::from_secs(if long { 180 } else { 15 }))
+                let first = args.first().map(String::as_str);
+                let quiet = matches!(first, Some("load")) || args.get(..2).is_some_and(|a| a == ["server", "start"]);
+                run_command(&lms, args, Duration::from_secs(if first == Some("load") { 180 } else { 15 }), !quiet)
             },
             log,
         )
@@ -274,7 +300,7 @@ mod tests {
     fn a_command_that_outlives_its_timeout_is_killed_and_reported() {
         let sleeper = script("sleep", "exec sleep 30");
         let started = std::time::Instant::now();
-        let err = run_command(&sleeper, &strs(&["ps"]), Duration::from_millis(200)).unwrap_err();
+        let err = run_command(&sleeper, &strs(&["ps"]), Duration::from_millis(200), true).unwrap_err();
         std::fs::remove_file(&sleeper).ok();
         assert!(err.contains("timed out"), "{err}");
         assert!(started.elapsed() < Duration::from_secs(5));
@@ -283,7 +309,7 @@ mod tests {
     #[test]
     fn a_command_reads_no_stdin_and_returns_its_output() {
         let echo = script("echo", "cat >/dev/null; echo \"$1 ok\"");
-        let out = run_command(&echo, &strs(&["ps"]), Duration::from_secs(5));
+        let out = run_command(&echo, &strs(&["ps"]), Duration::from_secs(5), true);
         std::fs::remove_file(&echo).ok();
         assert_eq!(out.unwrap().trim(), "ps ok");
     }
@@ -291,8 +317,65 @@ mod tests {
     #[test]
     fn a_failing_command_reports_its_stderr() {
         let bad = script("bad", "echo nope >&2; exit 3");
-        let err = run_command(&bad, &strs(&["load"]), Duration::from_secs(5)).unwrap_err();
+        let err = run_command(&bad, &strs(&["load"]), Duration::from_secs(5), true).unwrap_err();
         std::fs::remove_file(&bad).ok();
         assert!(err.contains("nope"), "{err}");
+    }
+
+    #[test]
+    fn the_flag_is_released_when_the_work_panics() {
+        let flag = AtomicBool::new(false);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| exclusive(&flag, || panic!("runner blew up"))));
+        assert!(outcome.is_err());
+        assert!(exclusive(&flag, || Ok(())).is_ok());
+    }
+
+    #[test]
+    fn a_daemon_holding_the_pipes_does_not_delay_a_quiet_command() {
+        let starter = script("daemon", "sleep 30 &\nexit 0");
+        let started = std::time::Instant::now();
+        let out = run_command(&starter, &strs(&["server", "start"]), Duration::from_secs(10), false);
+        std::fs::remove_file(&starter).ok();
+        assert!(out.is_ok(), "{out:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_daemon_holding_the_pipes_does_not_hang_a_captured_command_past_its_timeout() {
+        let starter = script("daemon-captured", "sleep 30 &\nexit 0");
+        let started = std::time::Instant::now();
+        let _ = run_command(&starter, &strs(&["ps"]), Duration::from_millis(300), true);
+        std::fs::remove_file(&starter).ok();
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_quiet_command_that_fails_is_reported_by_its_exit_status() {
+        let bad = script("quiet-bad", "exit 3");
+        let err = run_command(&bad, &strs(&["load", "x", "-y"]), Duration::from_secs(5), false).unwrap_err();
+        std::fs::remove_file(&bad).ok();
+        assert!(err.contains("exit"), "{err}");
+    }
+
+    #[test]
+    fn ps_is_retried_while_the_server_comes_up() {
+        let tries = std::cell::Cell::new(0);
+        let run = |_: &[String]| -> Result<String, String> {
+            tries.set(tries.get() + 1);
+            if tries.get() < 3 { Err("not up yet".into()) } else { Ok("[]".into()) }
+        };
+        assert_eq!(ps_with_retry(&run, Duration::from_millis(1)), Ok("[]".into()));
+        assert_eq!(tries.get(), 3);
+    }
+
+    #[test]
+    fn ps_gives_up_after_ten_tries() {
+        let tries = std::cell::Cell::new(0);
+        let run = |_: &[String]| -> Result<String, String> {
+            tries.set(tries.get() + 1);
+            Err("down".into())
+        };
+        assert!(ps_with_retry(&run, Duration::from_millis(1)).is_err());
+        assert_eq!(tries.get(), 10);
     }
 }
